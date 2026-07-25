@@ -42,7 +42,7 @@ def exp_A_1(
     dico = dict()
     dico["index"] = []
     dico["label"] = []
-    dico["greedy_size"] = []
+    dico["freed_features"] = []
     dico["greedy_time"] = []
 
     n_in_wo_channel = int(x_test.shape[-1] / channel)
@@ -111,7 +111,7 @@ def exp_A_1(
         if verbose:
             print("greedy time", running_time)
 
-        dico["greedy_size"].append(xai_size)
+        dico["freed_features"].append(xai_size)
         dico["greedy_time"].append(running_time)
 
         dico["index"].append(index)
@@ -150,7 +150,7 @@ def exp_A_2(
     dico = dict()
     dico["index"] = []
     dico["label"] = []
-    dico["greedy_size"] = []
+    dico["freed_features"] = []
     dico["greedy_time"] = []
     n_in_wo_channel = int(x_test.shape[-1] / channel)
     
@@ -211,7 +211,7 @@ def exp_A_2(
         if verbose:
             print("greedy time", running_time)
 
-        dico["greedy_size"].append(xai_size)
+        dico["freed_features"].append(xai_size)
         dico["greedy_time"].append(running_time)
 
         dico["index"].append(index)
@@ -248,7 +248,7 @@ def exp_A_2_no_overwrite(
     dico = dict()
     dico["index"] = []
     dico["label"] = []
-    dico["greedy_size"] = []
+    dico["freed_features"] = []
     dico["greedy_time"] = []
 
     for index in indices:
@@ -288,7 +288,7 @@ def exp_A_2_no_overwrite(
         if verbose:
             print("greedy time", running_time)
 
-        dico["greedy_size"].append(xai_size)
+        dico["freed_features"].append(xai_size)
         dico["greedy_time"].append(running_time)
 
         dico["index"].append(index)

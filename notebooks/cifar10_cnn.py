@@ -1,121 +1,150 @@
-import sys
-sys.path.append("../")
 import os
-os.environ["KERAS_BACKEND"] = "torch"
+from argparse import ArgumentParser, Namespace
 
-from fame.experiments import exp_A_1, exp_A_2, exp_A_2_no_overwrite, exp_B_no_overwrite
+os.environ["KERAS_BACKEND"] = "torch"
+from shared_gpu import configure_shared_gpu_from_argv
+
+
+configure_shared_gpu_from_argv()
+
 from keras.models import load_model
+from keras import Model
 import numpy as np
+from tqdm import tqdm
+from typing import Any, cast
 
 # check robustness because of numerical approximation error between solvers
-from fame.abstract_domain.utils import check_is_robust 
+from fame.abstract_domain.utils import check_is_robust
+from fame.batch_free.free_l2 import check_is_robust_l2
+from fame.experiments import exp_A_1, exp_A_2
+
+import random
 
 from configs.cifar10_configs import get_dataset, dataset_to_numpy, means_np, stddevs_np
 
-train_dataset, val_dataset = get_dataset(augment=False, get_train=True, get_val=True)
-test_dataset = get_dataset(augment=False, get_train=False, get_val=False)
+random.seed(42)
 
-DATASET = "CIFAR10"
-MODEL = "cnn"
+def main(args: Namespace):
+    train_dataset, val_dataset = get_dataset(augment=False, get_train=True, get_val=True)
+    test_dataset = get_dataset(augment=False, get_train=False, get_val=False)
 
-means_avg = np.mean(means_np)
-std_avg = np.mean(stddevs_np)
-eps = 0.005#(2./255.)/std_avg #0.03
-print("eps:", eps)
-channel = 3
-data_format = "channels_last"
-n_class = 10
+    DATASET = "CIFAR10"
+    MODEL = "cnn"
+    norm = args.norm
+    eps = args.eps
 
-date="24-07-26"
+    means_avg = float(np.mean(means_np))
+    std_avg = float(np.mean(stddevs_np))
+    print("eps:", eps)
+    channel = 3
+    data_format = "channels_last"
+    n_class = 10
 
-"""
-download and process CIFAR10 data.
-"""
-x_train, y_train = dataset_to_numpy(train_dataset, means_np, stddevs_np)
-x_valid, y_valid = dataset_to_numpy(val_dataset, means_np, stddevs_np)
-x_test, y_test = dataset_to_numpy(test_dataset, means_np, stddevs_np)
+    """
+    Download and process CIFAR10 data.
+    """
+    x_train, y_train = dataset_to_numpy(cast(Any, train_dataset), means_np, stddevs_np)
+    x_valid, y_valid = dataset_to_numpy(cast(Any, val_dataset), means_np, stddevs_np)
+    x_test, y_test = dataset_to_numpy(cast(Any, test_dataset), means_np, stddevs_np)
+    del x_train, y_train, x_valid, y_valid
 
-x_test_flattened = np.reshape(x_test, (-1, 3072))
-print(f"x_test shape (Normalisé, NHWC): {x_test.shape}")
-print(f"x_test dtype: {x_test.dtype}")
+    x_test_flattened = np.reshape(x_test, (-1, 3072))
+    print(f"x_test shape (normalized, NHWC): {x_test.shape}")
+    print(f"x_test dtype: {x_test.dtype}")
 
-k_model = load_model("./models/resnet_2b_ported.keras")
-k_model.eval()
+    k_model = cast(Model, load_model("./models/resnet_2b_ported.keras"))
 
-robust_eps003 = [6,  13,  15,  16,  19,  21,  23,  29,  34,  41,  44,  45,  50,  54,
-         60,  73,  75,  79,  82,  84,  90,  92,  98,  99, 102, 103, 104, 105,
-        116, 122, 123, 131, 133, 141, 142, 151, 153, 154, 157, 166, 175, 196,
-        202, 204, 208, 209, 215, 216, 220, 222, 225, 231, 232, 235, 240, 243,
-        244, 252, 257, 265, 272, 276, 280, 283, 285, 286, 288, 289, 290, 296,
-        297, 298, 311, 315, 321, 330, 331, 333, 334, 338, 341, 344, 345, 348,
-        353, 361, 362, 369, 371, 372, 374, 379, 381, 382, 386, 389, 390, 392,
-        400, 406, 414, 415, 417, 425, 429, 431, 440, 442, 443, 447, 452, 460,
-        462, 469, 471, 472, 475, 484, 486, 487, 489, 490, 493, 495, 497, 499,
-        507, 510, 511, 512, 514, 516, 517, 519, 521, 523, 524, 527, 529, 533,
-        540, 541, 542, 544, 546, 547, 560, 571, 572, 576, 581, 588, 590, 591,
-        592, 600, 601, 604, 605, 608, 609, 610, 612, 613, 619, 622, 626, 643,
-        654, 656, 662, 664, 666, 681, 691, 693, 696, 700, 709, 721, 723, 724,
-        726, 732, 736, 738, 741, 743, 745, 747, 750, 753, 759, 763, 764, 765,
-        772, 774, 782, 786, 789, 791, 800, 801, 803, 812, 813, 815, 823, 824,
-        827, 828, 830, 832, 838, 839, 840, 842, 844, 847, 854, 856, 857, 858,
-        859, 864, 868, 871, 872, 874, 879, 883, 885, 891, 894, 899, 902, 903,
-        911, 914, 915, 917, 921, 925, 931, 934, 935, 939, 940, 946, 951, 955,
-        958, 959, 960, 968, 973, 975, 984, 985, 989, 990, 994, 997, 999]
+    def get_predicted_label(input_sample: np.ndarray) -> int:
+        prediction = k_model.predict(np.asarray(input_sample)[None])
+        return int(np.argmax(prediction[0]))
 
-#robust_eps003= [  6,  13,  15,  16,  19,  21,  23,  29,  34,  41,  44,  45,  50,  54, 60,  73,  75,  79,  82,  84,  90,  92,  98,  99, ]
-indices = [i for i in range(0,1000) if i not in robust_eps003]
-indices = [508]
-print(len(indices))
+    def is_robust(j: int) -> bool:
+        if norm == "linf":
+            return check_is_robust(
+                model=k_model,
+                input_sample=x_test_flattened[j],
+                eps=eps,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+            )
+        if norm == "l2":
+            return check_is_robust_l2(
+                model=k_model,
+                input_sample=x_test_flattened[j],
+                gt_label=get_predicted_label(x_test_flattened[j]),
+                eps=eps,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+            )
+        raise ValueError(f"Unknown norm: {norm}")
 
-dataframe_repository = "./results/CIFAR10/eps-{}/{}".format(f'{eps:.2f}'.replace('0.', ''),date)
-os.makedirs(dataframe_repository, exist_ok =True)
+    indices = list(range(len(x_test_flattened)))
+    random.shuffle(indices)
+    indices = indices[: args.n_samples]
+    indices = [i for i in tqdm(indices, desc="Checking robustness") if not is_robust(i)]
+    print("len(indices): ", len(indices))
+    print("indices: ", indices)
 
-# EXP = "A_1"
-# filename = "{}_{}_{}".format(DATASET, MODEL, EXP)
-# dataframe_filename_A1 = filename
+    dataframe_repository = "./results"
+    filename = "{}_{}_{}_norm_{}_eps_{}".format(
+        DATASET,
+        MODEL,
+        args.exp,
+        norm,
+        str(eps).replace("0.", ""),
+    )
 
-# dico_a_1 = exp_A_1(
-#         model=k_model,
-#         x_test=x_test_flattened,
-#         y_test=y_test,
-#         indices=indices, #new_indices
-#         eps=eps,
-#         dataframe_repository=dataframe_repository,
-#         dataframe_filename=dataframe_filename_A1,
-#         channel=channel,
-#         data_format=data_format,
-#         n_class=n_class,
-#         verbose=1,
-#         means=means_avg,
-#         stddev=std_avg
-#         #decomon_method=decomon_method
-#     )
-
-EXP = "A_2"
-filename = "{}_{}_{}".format(DATASET, MODEL, EXP)
-dataframe_filename_A2 = filename
-
-failing_indexes_a2 = []
-for j in indices:
-    try:
-        dico_a_2 = exp_A_2(
+    if args.exp == "A1":
+        exp_A_1(
             model=k_model,
             x_test=x_test_flattened,
             y_test=y_test,
-            indices=[j],#indices,
+            indices=indices,
             eps=eps,
             dataframe_repository=dataframe_repository,
-            dataframe_filename=dataframe_filename_A2,
+            dataframe_filename=filename,
             channel=channel,
             data_format=data_format,
             n_class=n_class,
             verbose=1,
-            sleep_time=0,
+            norm=norm,
             means=means_avg,
-            stddev=std_avg
+            stddev=std_avg,
         )
-    except Exception as ex:
-        print("exception: ", ex)
-        failing_indexes_a2.append(j)
-        print("fail: ", failing_indexes_a2)
-        continue
+    elif args.exp == "A2":
+        exp_A_2(
+            model=k_model,
+            x_test=x_test_flattened,
+            y_test=y_test,
+            indices=indices,
+            eps=eps,
+            dataframe_repository=dataframe_repository,
+            dataframe_filename=filename,
+            channel=channel,
+            data_format=data_format,
+            n_class=n_class,
+            verbose=1,
+            norm=norm,
+            means=means_avg,
+            stddev=std_avg,
+        )
+    else:
+        raise ValueError(f"Unknown experiment: {args.exp}")
+
+
+if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("--norm", type=str, default="l2", choices=["linf", "l2"])
+    parser.add_argument("--eps", type=float, default=0.005)
+    parser.add_argument("--exp", type=str, default="A1", choices=["A1", "A2"])
+    parser.add_argument("--n-samples", type=int, default=100)
+    parser.add_argument(
+        "--shared_gpus",
+        action="store_true",
+        help="Select the GPU with the most free memory and mask visibility to that GPU only.",
+    )
+    args = parser.parse_args()
+
+    main(args)

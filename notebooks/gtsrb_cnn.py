@@ -1,8 +1,11 @@
 import os
+from argparse import ArgumentParser, Namespace
+
 os.environ["KERAS_BACKEND"] = "torch"
+from shared_gpu import configure_shared_gpu_from_argv
+configure_shared_gpu_from_argv()
 
 from keras.models import load_model
-from argparse import ArgumentParser, Namespace
 import numpy as np
 from tqdm import tqdm
 
@@ -113,6 +116,11 @@ if __name__ == "__main__":
     parser.add_argument("--norm", type=str, default="l2", choices=["linf", "l2"])
     parser.add_argument("--eps", type=float, default=0.05)
     parser.add_argument("--exp", type=str, default="A1", choices=["A1", "A2"])
+    parser.add_argument(
+        "--shared_gpus",
+        action="store_true",
+        help="Select the GPU with the most free memory and mask visibility to that GPU only.",
+    )
     args = parser.parse_args()
 
     main(args)
