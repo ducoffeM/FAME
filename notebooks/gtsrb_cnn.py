@@ -74,7 +74,7 @@ def main(args: Namespace):
     dataframe_repository = "./results"
 
     filename = "{}_{}_{}_norm_{}".format(DATASET, MODEL, args.exp, norm)
-    if args.exp == "A_1":
+    if args.exp == "A1":
         exp_A_1(
                 model=k_model,
                 x_test=x_test,
@@ -89,7 +89,7 @@ def main(args: Namespace):
                 verbose=1,
                 norm=norm
             )
-    elif args.exp == "A_2":
+    elif args.exp == "A2":
         exp_A_2(
                 model=k_model,
                 x_test=x_test,
@@ -112,7 +112,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--norm", type=str, default="l2", choices=["linf", "l2"])
     parser.add_argument("--eps", type=float, default=0.05)
-    parser.add_argument("--exp", type=str, default="A_1", choices=["A_1", "A_2"])
+    parser.add_argument("--exp", type=str, default="A1", choices=["A1", "A2"])
     args = parser.parse_args()
 
     main(args)
