@@ -1,11 +1,18 @@
 import gc
 import os
 import time
+from typing import Literal
 
 import keras
 import numpy as np
 import pandas as pd
-from fame import find_closest_xai, free_at_once_k_features, free_iteratively_k_features
+from fame import (
+    find_closest_xai,
+    free_at_once_k_features,
+    free_iteratively_k_features,
+    free_at_once_k_features_l2,
+    free_iteratively_k_features_l2,
+)
 
 ## Experiment A: Greedy-only execution
 
@@ -24,6 +31,7 @@ def exp_A_1(
     n_class: int = 10,
     verbose: int = 0,
     sleep_time: int = 1,  # one second between each run
+    norm: Literal["linf", "l2"] = "linf",
     means=None, 
     stddev=None
 ):
@@ -61,21 +69,41 @@ def exp_A_1(
             upper_bound_input = np.minimum(input_sample + eps, ((1 - means) / stddev))
 
         start_time = time.time()
-        abstract_set = free_at_once_k_features(
-            model=model,
-            gt_label=gt_label,
-            input_sample=input_sample,
-            lower_bound_input=lower_bound_input,
-            upper_bound_input=upper_bound_input,
-            xai_indices=xai_indices,
-            free_indices=free_indices,
-            cardinality=cardinality,
-            channel=channel,
-            data_format=data_format,
-            n_class=n_class,
-            method="greedy",
-            verbose=int(verbose > 1),
-        )
+        if norm == "linf":
+            abstract_set = free_at_once_k_features(
+                model=model,
+                gt_label=gt_label,
+                input_sample=input_sample,
+                lower_bound_input=lower_bound_input,
+                upper_bound_input=upper_bound_input,
+                xai_indices=xai_indices,
+                free_indices=free_indices,
+                cardinality=cardinality,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+                method="greedy",
+                verbose=int(verbose > 1),
+            )
+        elif norm == "l2":
+            abstract_set = free_at_once_k_features_l2(
+                model=model,
+                gt_label=gt_label,
+                input_sample=input_sample,
+                lower_bound_input=lower_bound_input,
+                upper_bound_input=upper_bound_input,
+                eps=eps,
+                xai_indices=xai_indices,
+                free_indices=free_indices,
+                cardinality=cardinality,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+                verbose=int(verbose > 1),
+            )
+        else:
+            raise ValueError(f"unknown norm {norm}")
+        
         end_time = time.time()
         xai_size = np.max(abstract_set.sum(-1))
         running_time = end_time - start_time
@@ -110,6 +138,7 @@ def exp_A_2(
     n_class: int = 10,
     verbose: int = 0,
     sleep_time: int = 1,  # one second between each run
+    norm: Literal["linf", "l2"] = "linf",
     means = None, 
     stddev = None
 ):
@@ -123,7 +152,8 @@ def exp_A_2(
     dico["label"] = []
     dico["greedy_size"] = []
     dico["greedy_time"] = []
-
+    n_in_wo_channel = int(x_test.shape[-1] / channel)
+    
     for index in indices:
         if verbose:
             print("ongoing index", index)
@@ -138,21 +168,41 @@ def exp_A_2(
         free_indices = []
         start_time = time.time()
 
-        abstract_set, singleton_set = free_iteratively_k_features(
-            model=model,
-            gt_label=gt_label,
-            input_sample=input_sample,
-            eps=eps,
-            xai_indices=xai_indices,
-            free_indices=free_indices,
-            channel=channel,
-            data_format=data_format,
-            n_class=n_class,
-            method="greedy",
-            verbose=int(verbose > 1),
-            means=means,
-            stddev=stddev,
-        )
+        if norm == "linf":
+            abstract_set, singleton_set = free_iteratively_k_features(
+                model=model,
+                gt_label=gt_label,
+                input_sample=input_sample,
+                eps=eps,
+                xai_indices=xai_indices,
+                free_indices=free_indices,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+                method="greedy",
+                verbose=int(verbose > 1),
+                means=means,
+                stddev=stddev,
+            )
+        elif norm == "l2":
+            abstract_set, singleton_set = free_iteratively_k_features_l2(
+                model=model,
+                gt_label=gt_label,
+                input_sample=input_sample,
+                eps=eps,
+                xai_indices=xai_indices,
+                free_indices=free_indices,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+                refining_domain=True,
+                singleton_refinement=True,
+                verbose=int(verbose > 1),
+                means=means,
+                stddev=stddev,
+            )
+        else:
+            raise ValueError(f"unknown norm {norm}")
         end_time = time.time()
         abstract_set = abstract_set + singleton_set
         xai_size = len(abstract_set)
