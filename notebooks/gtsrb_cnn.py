@@ -73,7 +73,7 @@ def main(args: Namespace):
 
     dataframe_repository = "./results"
 
-    filename = "{}_{}_{}_norm_{}".format(DATASET, MODEL, args.exp, norm)
+    filename = "{}_{}_{}_norm_{}_eps_{}".format(DATASET, MODEL, args.exp, norm, str(eps).replace("0.", ""))
     if args.exp == "A1":
         exp_A_1(
                 model=k_model,
