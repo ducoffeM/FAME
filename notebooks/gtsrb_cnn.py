@@ -4,13 +4,17 @@ os.environ["KERAS_BACKEND"] = "torch"
 from keras.models import load_model
 from argparse import ArgumentParser, Namespace
 import numpy as np
+from tqdm import tqdm
 
 # check robustness because of numerical approximation error between solvers
 from fame.abstract_domain.utils import check_is_robust 
-from fame.experiments import exp_A_1, exp_A_2, exp_A_2_no_overwrite, exp_B_no_overwrite
+from fame.batch_free.free_l2 import check_is_robust_l2
+from fame.experiments import exp_A_1, exp_A_2
 
 import pickle
+import random
 
+random.seed(42)
 
 def main(args: Namespace):
     filename = "gtsrb.pickle"
@@ -35,45 +39,80 @@ def main(args: Namespace):
 
     k_model = load_model("./models/xairobas_gtsrb-cnn.keras")
 
-    indices = [i for i in range(100) if not i in [0,\
-    1,2,4, 5, 8, 11, 16, 20, 22, 24, 31, 38, 42, 43, 44, 46, 49, 50, 52, 53, 55, 56,57, 58, 60, 62, 64, 67, 72, 74, 77, 78, 79, 81, 83, 88, 91, 92, 93]]
+    def get_predicted_label(input_sample: np.ndarray,) -> int:
+        prediction = k_model.predict(np.asarray(input_sample)[None], verbose=0)
+        return int(np.argmax(prediction[0]))
 
-    def is_robust(j):
-        return check_is_robust(model=k_model, 
-                        input_sample=x_test[j], 
-                        eps=eps, 
-                        channel=channel, 
-                        data_format=data_format, 
-                        n_class=n_class)
-
-    indices = [i for i in indices if not is_robust(i)]
-
+    def is_robust(j: int) -> bool:
+        if norm == "linf":
+            return check_is_robust(
+                model=k_model,
+                input_sample=x_test[j],
+                eps=eps,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+            )
+        if norm == "l2":
+            return check_is_robust_l2(
+                model=k_model,
+                input_sample=x_test[j],
+                gt_label=get_predicted_label(x_test[j]),
+                eps=eps,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+            )
+        raise ValueError(f"Unknown norm: {norm}")
+    indices = list(range(len(x_test)))
+    random.shuffle(indices)
+    indices = indices[:100]
+    indices = [i for i in tqdm(indices, desc="Checking robustness") if not is_robust(i)]
     print("len(indices): ", len(indices))
+    print("indices: ", indices)
 
     dataframe_repository = "./results"
 
-    EXP = "A_1"
-    filename = "{}_{}_{}_norm_{}".format(DATASET, MODEL, EXP, norm)
-    exp_A_1(
-            model=k_model,
-            x_test=x_test,
-            y_test=y_test,
-            indices=indices,
-            eps=eps,
-            dataframe_repository=dataframe_repository,
-            dataframe_filename=filename,
-            channel=channel,
-            data_format=data_format,
-            n_class=n_class,
-            verbose=1,
-            norm=norm
-        )
-    
+    filename = "{}_{}_{}_norm_{}".format(DATASET, MODEL, args.exp, norm)
+    if args.exp == "A_1":
+        exp_A_1(
+                model=k_model,
+                x_test=x_test,
+                y_test=y_test,
+                indices=indices,
+                eps=eps,
+                dataframe_repository=dataframe_repository,
+                dataframe_filename=filename,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+                verbose=1,
+                norm=norm
+            )
+    elif args.exp == "A_2":
+        exp_A_2(
+                model=k_model,
+                x_test=x_test,
+                y_test=y_test,
+                indices=indices,
+                eps=eps,
+                dataframe_repository=dataframe_repository,
+                dataframe_filename=filename,
+                channel=channel,
+                data_format=data_format,
+                n_class=n_class,
+                verbose=1,
+                norm=norm
+            )
+    else:
+        raise ValueError(f"Unknown experiment: {args.exp}")
+
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--norm", type=str, default="linf", choices=["linf", "l2"])
-    parser.add_argument("--eps", type=float, default=0.01)
+    parser.add_argument("--norm", type=str, default="l2", choices=["linf", "l2"])
+    parser.add_argument("--eps", type=float, default=0.05)
+    parser.add_argument("--exp", type=str, default="A_1", choices=["A_1", "A_2"])
     args = parser.parse_args()
 
     main(args)
