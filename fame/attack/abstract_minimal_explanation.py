@@ -1,9 +1,7 @@
-import keras
 import numpy as np
 import torch
 from fame.batch_free.order import get_greedy_order
-from keras import KerasTensor as Tensor
-
+Tensor = torch.Tensor
 from .abstract_minimal_explanation_sequential import (
     find_closest_xai as find_closest_xai_singleton,
 )
@@ -12,9 +10,11 @@ from .utils import get_attacks_bounds
 
 
 def find_closest_xai_with_dichotomy(
-    model: keras.models.Model,
+    model: torch.nn.Module,
     gt_label: int,
     input_sample: Tensor,
+    lower_bound: Tensor,
+    upper_bound: Tensor,
     eps: float = 0.0,
     xai_indices: list[int] = [],
     free_indices: list[int] = [],
@@ -25,8 +25,7 @@ def find_closest_xai_with_dichotomy(
     data_format: int = "channels_first",
     n_class: int = 10,
     traversal_order: str = "greedy",
-    means = None, 
-    stddev = None
+    verbose:int=0
 ) -> tuple[list[int], list[int]]:
     """Finds a robust feature set using a recursive divide-and-conquer algorithm.
 
@@ -73,27 +72,45 @@ def find_closest_xai_with_dichotomy(
     n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
     remaining_indices = [i for i in range(n_in_wo_channel) if not i in xai_indices + free_indices]
 
+    # start by attacking everything
+
+    adv_pred_everything: np.array = attack(
+        model=model,
+        input_sample_batch=input_sample[None],
+        lower_bound_batch=lower_bound[None],
+        upper_bound_batch=upper_bound[None],
+        gt_label=gt_label,
+        eps=eps,
+        method=method,
+        device=device
+    )  # (1,)
+    if adv_pred_everything[0] == gt_label:
+        print("no attacks could be find, skip the search !!!!")
+        return [], remaining_indices
+
+
+
     if len(remaining_indices) == 0:
         # best solution is
         assert len(xai_indices + free_indices) == n_in_wo_channel, "missing input features"
         return xai_indices, free_indices
 
-    if means is None and stddev is None:
-        lower_bound: np.ndarray = np.maximum(input_sample - eps, 0 * input_sample)
-        upper_bound: np.ndarray = np.minimum(input_sample + eps, 0 * input_sample + 1)
-    else:
-        lower_bound: np.ndarray = np.maximum(np.copy(input_sample) - eps, - (means/stddev))
-        upper_bound: np.ndarray = np.minimum(np.copy(input_sample) + eps, ((1-means)/stddev))
+
 
     # start by attacking everything except xai_indices
     input_sample_everything, lower_bound_everything, upper_bound_everything = get_attacks_bounds(
         input_sample=input_sample,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
         eps=eps,
-        free_indices=free_indices + remaining_indices[1:],
-        remaining_indices=remaining_indices[:1],
+        #free_indices=free_indices + remaining_indices[1:],
+        #remaining_indices=remaining_indices[:1],
+        free_indices=free_indices,
+        remaining_indices=remaining_indices,
         channel=channel,
         data_format=data_format,
     )
+
     adv_pred_everything: np.array = attack(
         model=model,
         input_sample_batch=input_sample_everything,
@@ -111,6 +128,8 @@ def find_closest_xai_with_dichotomy(
         model=model,
         gt_label=gt_label,
         input_sample=input_sample,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
         eps=eps,
         free_indices=free_indices,
         remaining_indices=remaining_indices,
@@ -119,6 +138,8 @@ def find_closest_xai_with_dichotomy(
         channel=channel,
         data_format=data_format,
     )
+
+    assert set(xai_set_init).isdisjoint(set(free_indices)), "xai_set_init should not overlap with free_indices"
 
     # remove them from remaining_indices
     remaining_indices_init: list[int] = [i for i in remaining_indices if not i in xai_set_init]
@@ -131,7 +152,8 @@ def find_closest_xai_with_dichotomy(
         return xai_set_init + xai_indices, remaining_indices_init + free_indices
 
     # compute traversal order
-    if traversal_order == "greedy":
+    if traversal_order == "lirpa":
+        
         remaining_features_with_traversal = get_greedy_order(
             model=model,
             input_sample=input_sample,
@@ -144,6 +166,9 @@ def find_closest_xai_with_dichotomy(
             data_format=data_format,
             n_class=n_class,
         )
+
+        assert set(remaining_features_with_traversal).isdisjoint(set(free_indices)), "remaining_features_with_traversal should not overlap with free_indices"
+        
     else:
         raise NotImplementedError("implement other orders if needed")
 
@@ -157,10 +182,13 @@ def find_closest_xai_with_dichotomy(
 
     # attack on the second half
     # solution A
+    print('C')
     xai_A = find_singleton_feature_2_add(
         model=model,
         gt_label=gt_label,
         input_sample=input_sample,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
         eps=eps,
         free_indices=free_indices + remaining_indices_part_0,
         remaining_indices=remaining_indices_part_1,
@@ -169,13 +197,17 @@ def find_closest_xai_with_dichotomy(
         channel=channel,
         data_format=data_format,
     )
+    assert set(xai_A).isdisjoint(set(free_indices)), "xai_A should not overlap with free_indices"
 
     # if len(xai_A)==0, then freeing  remaining_indices_part_0 is not enough
     if len(xai_A) == 0:
+        print('D')
         xai_C, remaining_C = find_closest_xai_with_dichotomy(
             model=model,
             gt_label=gt_label,
             input_sample=input_sample,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
             eps=eps,
             xai_indices=xai_indices + xai_set_init,
             free_indices=free_indices + remaining_indices_part_0,
@@ -187,6 +219,7 @@ def find_closest_xai_with_dichotomy(
             n_class=n_class,
             traversal_order=traversal_order,
         )
+        assert set(xai_C).isdisjoint(set(free_indices)), "xai_C should not overlap with free_indices"
 
         assert len(xai_C + remaining_C) == n_in_wo_channel, "missing input features C"
         return xai_C, remaining_C
@@ -199,10 +232,13 @@ def find_closest_xai_with_dichotomy(
     xai_B: list[int]
     remaining_B: list[int]
 
+    print('E')
     xai_B, remaining_B = find_closest_xai_with_dichotomy(
         model=model,
         gt_label=gt_label,
         input_sample=input_sample,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
         eps=eps,
         xai_indices=xai_indices + xai_set_init + xai_A,
         free_indices=free_indices + free_indices_A,
@@ -215,12 +251,16 @@ def find_closest_xai_with_dichotomy(
     )
     # filter xai_A from xai_B
     xai_B = [i for i in xai_B if not i in xai_A]
+    assert set(xai_B).isdisjoint(set(free_indices)), "xai_B should not overlap with free_indices"
 
     # we attack again xai_A features
+    print('D')
     xai_B_A: list[int] = find_singleton_feature_2_add(
         model=model,
         gt_label=gt_label,
         input_sample=input_sample,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
         eps=eps,
         free_indices=remaining_B,
         remaining_indices=xai_A,
@@ -230,6 +270,7 @@ def find_closest_xai_with_dichotomy(
         data_format=data_format,
     )
     remaining_B += [i for i in xai_A if not i in xai_B_A]
+    assert set(xai_B_A).isdisjoint(set(free_indices)), "xai_B_A should not overlap with free_indices"
 
     # call on part 2
 
@@ -260,9 +301,11 @@ def find_closest_xai_with_dichotomy(
 
 
 def find_closest_xai(
-    model: keras.models.Model,
+    model: torch.nn.Module,
     gt_label: int,
     input_sample: Tensor,
+    lower_bound: Tensor,
+    upper_bound: Tensor,
     eps: float = 0.0,
     xai_indices: list[int] = [],
     free_indices: list[int] = [],
@@ -272,6 +315,7 @@ def find_closest_xai(
     data_format: int = "channels_first",
     n_class: int = 10,
     traversal_order: str = "greedy",
+    verbose:int=0,
 ) -> tuple[list[int], list[int]]:
     """Finds a minimal robust feature set using a two-stage search process.
 
@@ -314,11 +358,14 @@ def find_closest_xai(
     """
 
     n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
-
+    #print('A', len(free_indices), len(np.unique(free_indices)), len(xai_indices), len(np.unique(xai_indices)))
+    #print('toto', input_sample.shape, lower_bound.shape, upper_bound.shape)
     potential_xai_d, _ = find_closest_xai_with_dichotomy(
         model=model,
         gt_label=gt_label,
         input_sample=input_sample,
+        lower_bound= lower_bound,
+        upper_bound= upper_bound,
         eps=eps,
         xai_indices=xai_indices,
         free_indices=free_indices,
@@ -330,14 +377,21 @@ def find_closest_xai(
         traversal_order=traversal_order,
     )
 
+    #print('B', len(free_indices), len(np.unique(free_indices)), len(xai_indices), len(np.unique(xai_indices)))
+    assert set(potential_xai_d).isdisjoint(set(free_indices)), "potential_xai_d should not overlap with free_indices"
+    #print('AA', len(free_indices))
+
+
     # relaunch with sequential (longer but tighter so we do it on a restricted domain)
-    if n_in_wo_channel > len(potential_xai_d + free_indices):
+    if n_in_wo_channel > len(potential_xai_d + free_indices+xai_indices):
         potential_xai_s, extra_free_s = find_closest_xai_singleton(
             model=model,
             gt_label=gt_label,
             input_sample=input_sample,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
             eps=eps,
-            xai_indices=potential_xai_d,
+            xai_indices=xai_indices+potential_xai_d,
             free_indices=free_indices,
             method=method,
             device=device,
@@ -346,10 +400,11 @@ def find_closest_xai(
             n_class=n_class,
             traversal_order=traversal_order,
         )
-        # check
-        assert (
-            len(potential_xai_d + potential_xai_s + extra_free_s + free_indices) == n_in_wo_channel
-        ), "missing input features"
+        #print('C', len(free_indices), len(np.unique(free_indices)), len(xai_indices), len(np.unique(xai_indices)))
+        assert set(potential_xai_s).isdisjoint(set(free_indices)), "potential_xai_d should not overlap with free_indices"
+
+        #print('AB', len(free_indices))
+
         return potential_xai_d + potential_xai_s, extra_free_s
     else:
         # we have already a minimal explanation

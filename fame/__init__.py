@@ -1,2 +1,1 @@
-from fame.attack import find_closest_xai
-from fame.batch_free.free import free_at_once_k_features, free_iteratively_k_features
+from fame.fame import get_xai_fame

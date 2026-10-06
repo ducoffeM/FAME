@@ -1,12 +1,12 @@
 from typing import Any, List, Tuple, Union
 
-import keras
-import keras.ops as K
 import numpy as np
-from decomon.perturbation_domain import get_upper_box
 from fame.abstract_domain.abstract import get_abstract_output_domain
-from keras import KerasTensor as Tensor
 
+import torch
+from torch import Tensor
+import numpy as np
+from typing import Union, List, Any
 
 def get_upper_box_l0(
     x_min: Tensor,
@@ -14,8 +14,8 @@ def get_upper_box_l0(
     x_center: Tensor,
     w: Tensor,
     b: Tensor,
-    mask_xai: np.ndarray,
-    mask_free: np.ndarray,
+    mask_xai: Union[Tensor, np.ndarray],
+    mask_free: Union[Tensor, np.ndarray],
     channel: int,
     data_format: str,
     cardinality: Union[int, List[int]],
@@ -63,91 +63,87 @@ def get_upper_box_l0(
     missing_batchsize: bool = "missing_batchsize" in kwargs and kwargs["missing_batchsize"]
 
     if missing_batchsize:
-        w = w[None]
-        b = b[None]
+        w = w.unsqueeze(0)  # Shape: (1, ...)
+        b = b.unsqueeze(0)  # Shape: (1, ...)
 
-    # split into positive and negative components
-    n_h: list[int] = len(w.shape[2:])  # output shape of the layer
-    n_in: int = int(
-        w.shape[1] / channel
-    )  # number of input features (without the channel dimension)
-
-    # assuming channels_first
-    if data_format == "channels_first":
-        w = K.reshape(w, (-1, channel, n_in) + w.shape[2:])  # (None, c, n_in, n_h)
+    # Ensure numpy masks are converted to PyTorch Tensors on the correct device
+    device = w.device
+    dtype = w.dtype
+    
+    if isinstance(mask_xai, np.ndarray):
+        mask_xai = torch.from_numpy(mask_xai).to(device=device, dtype=dtype)
     else:
-        w = K.reshape(w, (-1, n_in, channel) + w.shape[2:])  # (None, n_in, c, n_h)
+        mask_xai = mask_xai.to(device=device, dtype=dtype)
 
-    w_pos: Tensor = K.relu(w)  # (None, c, n_in, n_h) assuming data_format == channels_first
-    w_neg: Tensor = w - w_pos  # (None, c, n_in, n_h)
+    if isinstance(mask_free, np.ndarray):
+        mask_free = torch.from_numpy(mask_free).to(device=device, dtype=dtype)
+    else:
+        mask_free = mask_free.to(device=device, dtype=dtype)
 
-    # expand dimension of x_min and x_max (None, channel, n_in) assuming channels_first
+    # Split into positive and negative components
+    n_h: list[int] = list(w.shape[2:])  # output shape dims of the layer
+    n_in: int = int(w.shape[1] / channel)  # number of input spatial features
+
+    if data_format == "channels_first":
+        w = torch.reshape(w, (-1, channel, n_in) + tuple(n_h))  # Shape: (B, c, n_in, n_h...)
+    else:
+        w = torch.reshape(w, (-1, n_in, channel) + tuple(n_h))  # Shape: (B, n_in, c, n_h...)
+
+    w_pos: Tensor = torch.relu(w)  # Shape: (B, c, n_in, n_h...)
+    w_neg: Tensor = w - w_pos       # Shape: (B, c, n_in, n_h...)
+
     axis_channel: int
     if data_format == "channels_first":
-        x_min_out: Tensor = K.reshape(
-            x_min, [-1, channel, n_in] + [1] * n_h
-        )  # x_min_out, x_max_out (None, c, n_in, 1..)
-        x_max_out: Tensor = K.reshape(x_max, [-1, channel, n_in] + [1] * n_h)
-        x_center_out: Tensor = K.reshape(x_center, [-1, channel, n_in] + [1] * n_h)
+        x_min_out: Tensor = torch.reshape(x_min, [-1, channel, n_in] + [1] * len(n_h))  # Shape: (B, c, n_in, 1...)
+        x_max_out: Tensor = torch.reshape(x_max, [-1, channel, n_in] + [1] * len(n_h))
+        x_center_out: Tensor = torch.reshape(x_center, [-1, channel, n_in] + [1] * len(n_h))
         axis_channel = 1
-        # get the nominal value (warning clipping) (None, c, n_in, 1..)
     else:
-        x_min_out: Tensor = K.reshape(
-            x_min, [-1, n_in, channel] + [1] * n_h
-        )  # x_min_out, x_max_out (None, n_in, c, 1..)
-        x_max_out: Tensor = K.reshape(x_max, [-1, n_in, channel] + [1] * n_h)
-        x_center_out: Tensor = K.reshape(x_center, [-1, n_in, channel] + [1] * n_h)
-        # get the nominal value (warning clipping) (None, n_in, c, 1..)
+        x_min_out: Tensor = torch.reshape(x_min, [-1, n_in, channel] + [1] * len(n_h))  # Shape: (B, n_in, c, 1...)
+        x_max_out: Tensor = torch.reshape(x_max, [-1, n_in, channel] + [1] * len(n_h))
+        x_center_out: Tensor = torch.reshape(x_center, [-1, n_in, channel] + [1] * len(n_h))
         axis_channel = 2
 
-    mask_xai_out: Tensor = K.reshape(
-        mask_xai, [-1, n_in] + [1] * n_h
-    )  # mask_xai_out, mask_free_out (None, n_in, 1..)
-    mask_free_out: Tensor = K.reshape(mask_free, [-1, n_in] + [1] * n_h)
+    mask_xai_out: Tensor = torch.reshape(mask_xai, [-1, n_in] + [1] * len(n_h))   # Shape: (B, n_in, 1...)
+    mask_free_out: Tensor = torch.reshape(mask_free, [-1, n_in] + [1] * len(n_h))
 
-    scoring_samples: Tensor = K.sum(
-        w_pos * (x_max_out - x_center_out) + w_neg * (x_min_out - x_center_out), axis_channel
-    )  # (None, n_in, 1..)
+    # Sum positive contributions along the channel dimension
+    scoring_samples: Tensor = torch.sum(
+        w_pos * (x_max_out - x_center_out) + w_neg * (x_min_out - x_center_out), 
+        dim=axis_channel
+    )  # Shape: (B, n_in, n_h...)
 
-    # get the scoring samples for each dimension (None, n_in, n_h):
-
-    # xai and free should have really low value so not to be considered
-    # scoring samples is always positive so we can set the scoring samples to 0 for xai and free if we don't want to select it
-    # xai because the indices are already selected and thus the dimension will be set to the nominal value
-    # free because the indices are always freed
+    # Exclude xai and free masked features from candidate top-K selection
     scoring_samples_wo_free: Tensor = (
-        scoring_samples * (1 - mask_xai_out) * (1 - mask_free_out)
-    )  # (None, n_in, n_h)
+        scoring_samples * (1.0 - mask_xai_out) * (1.0 - mask_free_out)
+    )  # Shape: (B, n_in, n_h...)
 
-    # select cardinality samples from 1..n_in not in xai or free to maximize scoring_samples
-    # keras.ops.sort is in ascending order. We sort it along axis n_in and take the last values
-    # cardinality does not take into account xai indices and free indices that are set to 0
-
-    # ascending order
+    # Select threshold using PyTorch sorting (descending order)
     if isinstance(cardinality, int):
-        # ascending order
-        scoring_rank: Tensor = -keras.ops.sort(
-            -scoring_samples_wo_free, axis=1
-        )  # (None, n_in, n_h)
-        threshold: Tensor = scoring_rank[:, cardinality - 1][:, None]  # (None, 1, n_h..)
+        # Sort in descending order along axis 1 (n_in)
+        sorted_scores, _ = torch.sort(scoring_samples_wo_free, dim=1, descending=True)  # Shape: (B, n_in, n_h...)
+        threshold: Tensor = sorted_scores[:, cardinality - 1:cardinality]               # Shape: (B, 1, n_h...)
     else:
         batch_size: int = len(cardinality)
-        threshold: Tensor = -keras.ops.sort(-scoring_samples_wo_free, axis=1)[
-            np.arange(batch_size), cardinality - 1
-        ][:, None]
-        # (None, 1, n_h..)
+        sorted_scores, _ = torch.sort(scoring_samples_wo_free, dim=1, descending=True)
+        
+        # Batch indexing for variable per-sample cardinalities
+        cardinality_tensor = torch.tensor(cardinality, device=device) - 1
+        threshold: Tensor = sorted_scores[torch.arange(batch_size, device=device), cardinality_tensor].unsqueeze(1) # Shape: (B, 1, n_h...)
 
-    # keep only scoring_samples lower than threshold
-    final_score_mask: Tensor = K.cast(threshold <= scoring_samples_wo_free, "int")
-    final_score: Tensor = K.sum(
-        scoring_samples_wo_free * final_score_mask, axis=1
-    )  # (None, n_h, ...)
+    # Mask to keep only scoring_samples greater than or equal to threshold
+    final_score_mask: Tensor = (scoring_samples_wo_free >= threshold).to(dtype=dtype)
+    final_score: Tensor = torch.sum(
+        scoring_samples_wo_free * final_score_mask, dim=1
+    )  # Shape: (B, n_h...)
 
-    bias: Tensor = b + K.sum(
-        K.sum(w * x_center_out, axis=axis_channel), axis=1
-    )  # (None, n_h...) sum over channel
-    # update bias with free indices !
-    free_scoring_samples: Tensor = K.sum(scoring_samples * mask_free_out, 1)
+    # Calculate nominal center bias + sum over channel and spatial input dims
+    bias: Tensor = b + torch.sum(
+        torch.sum(w * x_center_out, dim=axis_channel), dim=1
+    )  # Shape: (B, n_h...)
+
+    # Add free mask contributions directly
+    free_scoring_samples: Tensor = torch.sum(scoring_samples * mask_free_out, dim=1)
 
     bias = bias + free_scoring_samples
     return final_score + bias
@@ -215,7 +211,7 @@ def get_lower_box_l0(
 
 
 def check_is_robust(
-    model, input_sample, eps, channel, data_format, n_class, decomon_model=None, means=None, stddev=None
+    model, input_sample, eps, channel, data_format, n_class, lirpa_model=None, means=None, stddev=None
 ) -> bool:
     """Checks the L-infinity robustness of a model for a given input and epsilon.
 
@@ -233,14 +229,14 @@ def check_is_robust(
     the specified $L_\infty$ ball.
 
     Args:
-        model: The Keras model to verify.
+        model: The pytorch model to verify.
         input_sample: A single input point (e.g., an image) around which
             robustness is checked.
         eps: The radius (epsilon) of the $L_\infty$ norm perturbation.
         channel: The number of channels in the input data.
         data_format: The data format, either "channels_first" or "channels_last".
         n_class: The number of output classes of the model.
-        decomon_model: An optional, pre-compiled decomon model for improved
+        lirpa_model: An optional, pre-compiled LiRPA model for improved
             performance.
 
     Returns:
@@ -259,7 +255,7 @@ def check_is_robust(
         upper_bound = np.minimum(input_sample + eps, ((1-means)/stddev) )
         
     upper: np.array = get_abstract_output_domain(
-        model=model,
+        lirpa_model=model,
         input_sample=input_sample,
         lower_bound=lower_bound,
         upper_bound=upper_bound,
@@ -267,7 +263,6 @@ def check_is_robust(
         channel=channel,
         data_format=data_format,
         n_class=n_class,
-        decomon_model=decomon_model,
     )  # (1, n_out)
 
     return np.max(upper) <= 0

@@ -1,8 +1,7 @@
 # source: https://github.com/cleverhans-lab/cleverhans/blob/master/cleverhans/torch/utils.py
 import numpy as np
 import torch
-from keras import KerasTensor as Tensor
-
+Tensor = torch.Tensor
 
 def clip_eta(eta: Tensor, norm: int, eps: float) -> Tensor:
     """Projects a perturbation tensor onto a specified L-p norm ball.
@@ -101,13 +100,13 @@ def optimize_linear(grad: Tensor, eps: float, norm: int = np.inf) -> Tensor:
 
 def get_attacks_bounds(
     input_sample: np.array,
+    lower_bound: np.array,
+    upper_bound: np.array,
     eps: float,
     free_indices: list[int],
     remaining_indices: list[int],
     channel: int = 1,
     data_format: str = "channels_first",
-    means = None, 
-    stddev = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Constructs a batch of input domains for testing the vulnerability of single features.
 
@@ -144,12 +143,9 @@ def get_attacks_bounds(
     n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
     batch_size = len(remaining_indices)
 
-    if means is None and stddev is None:
-        lower_bound_input_ = np.maximum(input_sample - eps, 0 * input_sample)
-        upper_bound_input_ = np.minimum(input_sample + eps, 0 * input_sample + 1)
-    else:
-        lower_bound_input_: np.ndarray = np.maximum(np.copy(input_sample) - eps, - (means/stddev))
-        upper_bound_input_: np.ndarray = np.minimum(np.copy(input_sample) + eps, ((1-means)/stddev))
+    lower_bound_input_ = lower_bound
+    upper_bound_input_ = upper_bound
+
         
     # reshape according to data_format
     lower_bound_c: np.array

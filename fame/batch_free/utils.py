@@ -40,8 +40,8 @@ def get_b(
 
     Args:
         W: The feature-wise impact coefficients, from `get_W`.
-        w_u: The weights of the original affine upper bound from a decomon model.
-        b_u: The bias of the original affine upper bound from a decomon model.
+        w_u: The weights of the original affine upper bound from a lirpa model.
+        b_u: The bias of the original affine upper bound from a lirpa model.
         box: The input domain tensor `[lower, upper, center]`.
         free_mask: A binary mask identifying the "free" features.
 
@@ -125,10 +125,7 @@ def get_xai_mask(n_in: int, xai_indices: list[int]) -> np.ndarray:
         A numpy array of shape `(1, n_in, 1)` representing the binary mask,
         ready for broadcasting.
     """
-    xai_mask: np.ndarray = np.zeros((n_in,))
-    xai_mask[xai_indices] = 1  # 1 if potential candidate to add in the xai features
-    xai_mask = xai_mask[None, :, None]  # (1, n_in, 1)
-    return xai_mask
+    return get_mask(n_in, xai_indices)
 
 
 def get_free_mask(n_in: int, free_indices: list[int]) -> np.ndarray:
@@ -142,7 +139,21 @@ def get_free_mask(n_in: int, free_indices: list[int]) -> np.ndarray:
         A numpy array of shape `(1, n_in, 1)` representing the binary mask,
         ready for broadcasting.
     """
-    free_mask: np.ndarray = np.zeros((n_in,))
-    free_mask[free_indices] = 1  # 1 if this index has already been free
-    free_mask = free_mask[None, :, None]  # (1, n_in, 1)
-    return free_mask
+    return get_mask(n_in, free_indices)
+
+def get_mask(n_in: int, indices: list[int]) -> np.ndarray:
+    """Creates a broadcastable binary mask from a list of feature indices.
+
+    Args:
+        n_in: The total number of features (without channels).
+        indices: A list of indices to be marked as 1 in the mask.
+
+    Returns:
+        A numpy array of shape `(1, n_in, 1)` representing the binary mask,
+        ready for broadcasting.
+    """
+    mask: np.ndarray = np.zeros((n_in,))
+    mask[indices] = 1  # 1 if potential candidate to add in the features
+    mask = mask[None, :, None]  # (1, n_in, 1)
+    return mask
+

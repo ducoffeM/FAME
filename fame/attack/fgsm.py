@@ -1,16 +1,14 @@
 """The Fast Gradient Method attack."""
 from typing import Callable
 
-import keras
 import numpy as np
 import torch
-from keras import KerasTensor as Tensor
-
+Tensor = torch.Tensor
 from .utils import optimize_linear
 
 
 def fast_gradient_method(
-    model_fn: keras.models.Model,
+    model_fn: torch.nn.Module,
     x: Tensor,
     eps: float,
     norm: int,

@@ -1,17 +1,15 @@
 """The Projected Gradient Descent attack."""
 from typing import Callable
 
-import keras
 import numpy as np
 import torch
-from keras import KerasTensor as Tensor
-
+Tensor = torch.Tensor
 from .fgsm import fast_gradient_method
 from .utils import clip_eta, optimize_linear
 
 
 def projected_gradient_descent(
-    model_fn: keras.models.Model,
+    model_fn: torch.nn.Module,
     x: Tensor,
     eps: float,
     eps_iter: float,
@@ -115,11 +113,14 @@ def projected_gradient_descent(
 
     # If a data range was specified, check that the input was in that range
     if clip_min is not None:
-        assert_ge = torch.all(torch.ge(x, torch.tensor(clip_min, device=x.device, dtype=x.dtype)))
+        #assert_ge = torch.all(torch.ge(x, torch.tensor(clip_min, device=x.device, dtype=x.dtype)))
+        assert_ge = torch.all(torch.ge(x, clip_min.detach().clone().to(device=x.device, dtype=x.dtype)))
         asserts.append(assert_ge)
 
     if clip_max is not None:
-        assert_le = torch.all(torch.le(x, torch.tensor(clip_max, device=x.device, dtype=x.dtype)))
+        #assert_le = torch.all(torch.le(x, torch.tensor(clip_max, device=x.device, dtype=x.dtype)))
+        # Best practice if clip_max is a Tensor
+        assert_le = torch.all(torch.le(x, clip_max.detach().clone().to(device=x.device, dtype=x.dtype)))
         asserts.append(assert_le)
 
     # Initialize loop variables
@@ -174,4 +175,5 @@ def projected_gradient_descent(
 
     if sanity_checks:
         assert np.all(asserts)
+
     return adv_x, x_hist

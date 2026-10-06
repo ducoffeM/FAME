@@ -1,15 +1,27 @@
-from typing import Union
-
-import keras
+from typing import Union, Tuple
+import torch
 import numpy as np
 from fame.abstract_domain.abstract import (
+    get_abstract_model,
     get_abstract_output_domain,
     get_abstract_output_domain_singleton,
 )
 
+Tensor = torch.Tensor
+
+from fame.batch_free.utils import encode_matrix
+
+
+
+from auto_LiRPA.perturbations import Perturbation, PerturbationLpNorm
+from auto_LiRPA import BoundedModule, BoundedTensor
+
+
 
 def free_domain_with_abstract_interpretation_singleton(
-    model: keras.models.Model,
+    model: torch.nn.Module,
+    input_shape: Tuple[int],
+    gt_label:int, 
     input_sample: np.ndarray,
     lower_bound: np.ndarray,
     upper_bound: np.ndarray,
@@ -21,7 +33,8 @@ def free_domain_with_abstract_interpretation_singleton(
     channel: int = 1,
     data_format: str = "channels_first",
     n_class: int = 10,
-    decomon_model: keras.models.Model = None,
+    lirpa_model:BoundedModule=None,
+    method="CROWN"
 ) -> tuple[list[int], list[int]]:
     """Identifies individual features that can be proven robust using abstract interpretation.
 
@@ -43,7 +56,6 @@ def free_domain_with_abstract_interpretation_singleton(
         channel: The number of channels in the input data.
         data_format: The data format, "channels_first" or "channels_last".
         n_class: The number of output classes of the model.
-        decomon_model: An optional, pre-compiled decomon model for efficiency.
 
     Returns:
         A tuple of two lists of feature indices:
@@ -53,38 +65,57 @@ def free_domain_with_abstract_interpretation_singleton(
           that were also found to be robust.
         Returns `([], [])` if no robust singletons are found.
     """
-    # expand one dimension in the set of remaining features to the
-    n_in_with_channel: int = input_sample.shape[-1]
-    n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
+    if data_format == "channels_first":
+        channel, H, W = input_shape
+    else:
+        H, W, channel = input_shape
+
+    n_in_with_channel: int = channel * H * W
+    n_in_wo_channel: int = H*W
+
 
     remaining_indices: list[int]
     if potential_candidates is None:
         remaining_indices = [
             i for i in range(n_in_wo_channel) if i not in xai_indices + free_indices
         ]
+
     else:
         remaining_indices = potential_candidates
+
 
     upper: np.ndarray
     upper = get_abstract_output_domain_singleton(
         model=model,
+        gt_label=gt_label,
+        input_shape=input_shape,
         input_sample=input_sample,
         lower_bound=lower_bound,
         upper_bound=upper_bound,
         xai_indices=xai_indices,
         free_indices=free_indices,
         remaining_indices=remaining_indices,
-        channel=channel,
         data_format=data_format,
         n_class=n_class,
-        decomon_model=decomon_model,
+        lirpa_model=lirpa_model,
+        method=method
     )
 
+    assert len(upper) == len(remaining_indices), "The length of the upper bounds should match the number of remaining indices"
+
     if np.min(np.max(upper, -1)) <= 0:
+
+        # there is at least one singleton that is robust, return the best one and the rest
         top_index = np.argmin(np.max(upper, -1))
-        other_indices = [
-            i for i in range(len(upper)) if np.max(upper, -1)[i] <= 0 and i != top_index
-        ]
+        # Get matching indices
+        indices = np.where(np.max(upper, axis=-1) <= 0)[0]
+
+        # Exclude top_index 
+        other_indices = [i for i in indices if i != top_index]      
+        #other_indices = [i for i in np.where(np.max(upper, -1) <= 0)[0] and i != top_index]
+        #other_indices = [
+        #    i for i in range(len(upper)) if np.max(upper, -1)[i] <= 0 and i != top_index
+        #]
         return [remaining_indices[top_index]], [remaining_indices[j] for j in other_indices]
     else:
         return [], []
@@ -92,7 +123,9 @@ def free_domain_with_abstract_interpretation_singleton(
 
 ##### binary search
 def free_with_binary_search(
-    model: keras.models.Model,
+    model: torch.nn.Module,
+    input_shape: Tuple[int],
+    gt_label:int,
     input_sample: np.ndarray,
     lower_bound: np.ndarray,
     upper_bound: np.ndarray,
@@ -104,7 +137,9 @@ def free_with_binary_search(
     channel: int = 1,
     data_format: str = "channels_first",
     n_class: int = 10,
-    decomon_model: keras.models.Model = None,
+    lirpa_model: BoundedModule = None,
+    method:str= "CROWN",
+    verbose:int=0
 ) -> list[int]:
     """Finds a maximal robust subset of features using a recursive binary search.
 
@@ -123,7 +158,7 @@ def free_with_binary_search(
     5.  The results from the two halves are combined to form the final set.
 
     Args:
-        model: The Keras model to be analyzed.
+        model: The model to be analyzed.
         input_sample: The nominal input point.
         lower_bound: The lower bounds of the L-infinity perturbation space.
         upper_bound: The upper bounds of the L-infinity perturbation space.
@@ -140,11 +175,36 @@ def free_with_binary_search(
         provably robust when perturbed together.
     """
 
+    import time
+
+    if data_format == "channels_first":
+        channel, H, W = input_shape
+    else:
+        raise NotImplementedError()
+        #H, W, channel = input_shape
+
+    n_in_with_channel: int = np.prod(input_shape)
+    n_in_wo_channel: int = int(n_in_with_channel / channel)
+    device = next(model.parameters()).device
+
+    if potential_candidates is None:
+        potential_candidates = [
+            i for i in range(n_in_wo_channel) if i not in xai_indices + free_indices
+        ]
+
+
+    if lirpa_model is None:
+        
+        lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(device))
+
     # step 1: identify singleton that could be free
+    start_time = time.time()
     best_singleton: list[int]
     other_singleton: list[int]
     best_singleton, other_singleton = free_domain_with_abstract_interpretation_singleton(
         model=model,
+        input_shape=input_shape,
+        gt_label=gt_label,
         input_sample=input_sample,
         lower_bound=lower_bound,
         upper_bound=upper_bound,
@@ -154,27 +214,71 @@ def free_with_binary_search(
         channel=channel,
         data_format=data_format,
         n_class=n_class,
-        decomon_model=decomon_model,
+        lirpa_model=lirpa_model,
+        method=method
     )
+    end_time = time.time()
+    if verbose:
+        print(f"Time taken for free_domain_with_abstract_interpretation_singleton: {end_time - start_time} seconds")
+    if len(best_singleton):
+        assert best_singleton[0] in potential_candidates, "best_singleton should be in potential_candidates"
+
+
+
 
     if len(other_singleton):
+        assert [i in potential_candidates for i in other_singleton], "other_singleton should be a subset of potential_candidates"
         # create an order
         traversal_order_indices: list[int] = best_singleton + other_singleton
         # try to free everything at once
+
+        input_sample_torch = torch.tensor(np.reshape(input_sample, input_shape)[None], dtype=torch.float32).to(device)
+
+        if len(xai_indices):
+            input_sample_flat = np.reshape(input_shape, (channel, n_in_wo_channel))
+            lower_bound = np.reshape(lower_bound, (channel, n_in_wo_channel))
+            upper_bound = np.reshape(lower_bound, (channel, n_in_wo_channel))
+            lower_bound_flat[:, xai_indices] = input_sample_flat[xai_indices]
+            upper_bound_flat[:, xai_indices] = input_sample_flat[xai_indices]
+
+            lower_bound_torch = torch.tensor(np.reshape(lower_bound_flat, input_shape)[None], dtype=torch.float32).to(device)
+            upper_bound_torch = torch.tensor(np.reshape(upper_bound_flat, input_shape)[None], dtype=torch.float32).to(device)
+            eps = np.max(upper_bound_flat - lower_bound_flat)
+        else:
+            eps=np.max(upper_bound - lower_bound)
+            lower_bound_torch = torch.tensor(np.reshape(lower_bound, input_shape)[None], dtype=torch.float32).to(device)
+            upper_bound_torch = torch.tensor(np.reshape(upper_bound, input_shape)[None], dtype=torch.float32).to(device)
+
+        ptb:Perturbation = PerturbationLpNorm(norm=np.inf, eps=eps,
+                                                x_L = lower_bound_torch, x_U = upper_bound_torch)
+        # build your input domain
+        # encode matrix C
+        C_gt: np.ndarray = np.repeat(
+            encode_matrix(n_class=n_class, groundtruth=gt_label)[None], repeats=1, axis=0
+        )  # (current_batch_size, n_class, n_class-1)
+        C_gt = np.transpose(C_gt, (0, 2, 1))  # (current_batch_size, n_class-1, n_class)
+        # convert to torch tensor
+        device = next(model.parameters()).device
+        C_gt: Tensor = torch.tensor(C_gt, dtype=torch.float32).to(device)
+
+        start_time = time.time()
+
         upper: np.array = get_abstract_output_domain(
             model=model,
-            input_sample=input_sample,
-            lower_bound=lower_bound,
-            upper_bound=upper_bound,
-            #xai_indices=xai_indices,
-            free_indices=free_indices + traversal_order_indices,
-            channel=channel,
+            input_sample=input_sample_torch,
+            affine_bounds=False,
+            perturbation=ptb,
+            C=C_gt,
             data_format=data_format,
-            n_class=n_class,
-            decomon_model=decomon_model,
+            lirpa_model=lirpa_model,
+            method=method
         )  # (1, n_out)
         is_safe: bool = np.max(upper) <= 0
+        end_time = time.time()
+        if verbose:
+            print(f"Time taken for get_abstract_output_domain: {end_time - start_time} seconds")
         if is_safe:
+            assert [i in potential_candidates for i in traversal_order_indices], "traversal_order_indices should be a subset of potential_candidates"
             return traversal_order_indices
         else:
             # split in half
@@ -182,9 +286,14 @@ def free_with_binary_search(
             n_singleton_half: int = int(n_singleton / 2)
             traversal_order_indices_part_0: list[int] = traversal_order_indices[:n_singleton_half]
             traversal_order_indices_part_1: list[int] = traversal_order_indices[n_singleton_half:]
+
+            assert len(traversal_order_indices_part_0) + len(traversal_order_indices_part_1) == len(traversal_order_indices), "The two halves should sum up to the original list length"
+            start_time = time.time()
             # free as many as possible from this list with recursive calls of free_with_binary_search
             singleton_indices_part_0 = free_with_binary_search(
                 model=model,
+                input_shape=input_shape, 
+                gt_label = gt_label,
                 input_sample=input_sample,
                 lower_bound=lower_bound,
                 upper_bound=upper_bound,
@@ -194,11 +303,25 @@ def free_with_binary_search(
                 channel=channel,
                 data_format=data_format,
                 n_class=n_class,
-                decomon_model=decomon_model,
+                lirpa_model=lirpa_model,
+                method=method
             )
+            end_time = time.time()     
+            if verbose:
+                print(f"Time taken for free_with_binary_search on part 0: {end_time - start_time} seconds")
+            if len(singleton_indices_part_0):
+                try:
+                    assert [i in traversal_order_indices_part_0 for i in singleton_indices_part_0], "singleton_indices_part_0 should be a subset of traversal_order_indices_part_0"
+                    assert len(np.unique(singleton_indices_part_0)) == len(singleton_indices_part_0), "singleton_indices_part_0 should contain unique indices"
+                except:
+                    import pdb; pdb.set_trace()
+
             # considering this singleton indices as part of the free indices try to free as much as possible the rest
+            start_time = time.time()
             singleton_indices_part_1 = free_with_binary_search(
                 model=model,
+                input_shape=input_shape,
+                gt_label = gt_label,
                 input_sample=input_sample,
                 lower_bound=lower_bound,
                 upper_bound=upper_bound,
@@ -208,15 +331,28 @@ def free_with_binary_search(
                 channel=channel,
                 data_format=data_format,
                 n_class=n_class,
-                decomon_model=decomon_model,
+                lirpa_model=lirpa_model,
+                method=method
             )
+            end_time = time.time()
+            if verbose:
+                print(f"Time taken for free_with_binary_search on part 1: {end_time - start_time} seconds")
+            if len(singleton_indices_part_1):
+                try:
+                    assert [i in traversal_order_indices_part_1 for i in singleton_indices_part_1], "singleton_indices_part_1 should be a subset of traversal_order_indices_part_1"
+                    assert len(np.unique(singleton_indices_part_1)) == len(singleton_indices_part_1), "singleton_indices_part_1 should contain unique indices"
+                except:
+                    import pdb; pdb.set_trace()
+
+            free_indices_combined = singleton_indices_part_0 + singleton_indices_part_1
+            assert len(np.unique(free_indices_combined)) == len(free_indices_combined), "The combined free indices should contain unique indices"
             return singleton_indices_part_0 + singleton_indices_part_1
     else:
         return best_singleton
 
 
 def free_with_singleton_search(
-    model: keras.models.Model,
+    model: torch.nn.Module,
     input_sample: np.ndarray,
     lower_bound: np.ndarray,
     upper_bound: np.ndarray,
@@ -228,7 +364,6 @@ def free_with_singleton_search(
     channel: int = 1,
     data_format: str = "channels_first",
     n_class: int = 10,
-    decomon_model: keras.models.Model = None,
 ) -> list[int]:
     """Finds a set of robust features by iteratively and greedily selecting singletons.
 

@@ -1,22 +1,21 @@
-import keras
 import numpy as np
 import torch
-from keras import KerasTensor as Tensor
-
+Tensor = torch.Tensor
 from .fgsm import fast_gradient_method
 from .pgd import projected_gradient_descent
+from .apgd import autopgd_attack
 from .utils import get_attacks_bounds
 
 
 def attack(
-    model: keras.models.Model,
+    model: torch.nn.Module,
     input_sample_batch: np.ndarray,
     lower_bound_batch: np.ndarray,
     upper_bound_batch: np.ndarray,
     gt_label: int,
     eps: float,
     method: str,
-    device: str = "mps",
+    device: str = "cuda",
 ) -> np.ndarray:
     """Generates adversarial examples for a batch of inputs using a specified method.
 
@@ -67,10 +66,10 @@ def attack(
             clip_max=upper_t,
             y=gt_label_t,
         )
-    else:
+    elif method=="pgd":
         eps_iter = eps / 10.0  # arbitraty (do a config file)
-        nb_iter = 50  # arbitraty (do a config file)
-        x_adv_class = projected_gradient_descent(
+        nb_iter = 10  # arbitraty (do a config file)
+        x_adv_class, _ = projected_gradient_descent(
             model_fn=model,
             x=input_t,
             eps=eps,
@@ -83,20 +82,40 @@ def attack(
             y=gt_label_t,
             rand_init=False,  # for reproducibility
         )
-    adv_pred = model.predict(x_adv_class, verbose=0).argmax(-1)
+    elif method=="apgd":
+        nb_iter = 50  # Number of APGD iterations
+
+        x_adv_class, _ = autopgd_attack(
+            model_fn=model,
+            x=input_t,
+            eps=eps,
+            nb_iter=nb_iter,
+            norm=np.inf,
+            loss_fn=torch.nn.CrossEntropyLoss(reduction="none"),  # APGD uses per-sample loss
+            clip_min=lower_t,
+            clip_max=upper_t,
+            y=gt_label_t,
+            n_restarts=1,  # Single run (replaces rand_init)    
+        )
+
+    else:
+        raise NotImplementedError('unknow attack method {}'.format(method))
+    adv_pred = model(x_adv_class).argmax(-1)
 
     return adv_pred  # (batch_size,)
 
 
 def find_singleton_feature_2_add(
-    model: keras.models.Model,
+    model: torch.nn.Module,
     gt_label: int,
     input_sample: Tensor,
+    lower_bound: Tensor,
+    upper_bound: Tensor,
     eps: float = 0.0,
     free_indices: list[int] = [],
     remaining_indices: list[int] = [],  # attack only those features
     method: str = "fgsm",
-    device: str = "mps",
+    device: str = "cuda",
     channel: int = 1,
     data_format="channels_first",
 ) -> list[int]:
@@ -135,6 +154,8 @@ def find_singleton_feature_2_add(
 
     input_sample_batch, lower_bound_batch, upper_bound_batch = get_attacks_bounds(
         input_sample=input_sample,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
         eps=eps,
         free_indices=free_indices,
         remaining_indices=remaining_indices,
@@ -154,7 +175,6 @@ def find_singleton_feature_2_add(
         device=device,
     )  # (batch_size,)
 
-    xai_set: list[int] = [
-        remaining_indices[j] for j in range(batch_size) if adv_pred[j] != gt_label
-    ]
+
+    xai_set: list[int] = [remaining_indices[j] for j in range(batch_size) if adv_pred[j] != gt_label]
     return xai_set

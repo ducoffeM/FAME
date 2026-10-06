@@ -1,8 +1,7 @@
-import keras
-import numpy as np
 import torch
+import numpy as np
 from fame.batch_free.order import get_greedy_order
-from keras import KerasTensor as Tensor
+Tensor = torch.Tensor
 
 from .attack import attack, find_singleton_feature_2_add
 from .fgsm import fast_gradient_method
@@ -10,9 +9,11 @@ from .pgd import projected_gradient_descent
 
 
 def find_closest_xai(
-    model: keras.models.Model,
+    model: torch.nn.Module,
     gt_label: int,
     input_sample: Tensor,
+    lower_bound: Tensor,
+    upper_bound: Tensor,
     eps: float = 0.0,
     xai_indices: list[int] = [],
     free_indices: list[int] = [],
@@ -22,8 +23,8 @@ def find_closest_xai(
     data_format: int = "channels_first",
     n_class: int = 10,
     traversal_order: str = "greedy",
-    means = None, 
-    stddev = None
+    verbose:int=0,
+    singleton_only:bool=False, 
 ) -> tuple[list[int], list[int]]:
     """Identifies a minimal set of robust features required to prevent adversarial attacks.
 
@@ -72,12 +73,6 @@ def find_closest_xai(
 
     n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
 
-    if means is None and stddev is None:
-        lower_bound: np.ndarray = np.maximum(input_sample - eps, 0 * input_sample)
-        upper_bound: np.ndarray = np.minimum(input_sample + eps, 0 * input_sample + 1)
-    else:
-        lower_bound = np.maximum(input_sample - eps, - (means/stddev))
-        upper_bound = np.minimum(input_sample + eps, ((1-means)/stddev))
 
     # start by attacking everything
     adv_pred_everything: np.array = attack(
@@ -91,23 +86,25 @@ def find_closest_xai(
         device=device
     )  # (1,)
     if adv_pred_everything[0] == gt_label:
-        print("no attacks could be find, skip the search")
+        print("no attacks could be find, skip the search !!!!")
         return [], [i for i in range(n_in_wo_channel) if not i in xai_indices + free_indices]
 
     # compute traversal order
-    if traversal_order == "greedy":
+    if traversal_order == "lirpa":
+        
         remaining_features_with_traversal = get_greedy_order(
             model=model,
             input_sample=input_sample,
             gt_label=gt_label,
             lower_bound=lower_bound,
             upper_bound=upper_bound,
-            xai_indices=xai_indices,
             free_indices=free_indices,
             channel=channel,
             data_format=data_format,
             n_class=n_class,
         )
+    elif traversal_order=="arrange":
+        remaining_features_with_traversal = [i for i in range(n_in_wo_channel) if not i in xai_indices + free_indices]
     else:
         raise NotImplementedError("implement other orders if needed")
 
@@ -122,6 +119,8 @@ def find_closest_xai(
         model=model,
         gt_label=gt_label,
         input_sample=input_sample,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
         eps=eps,
         free_indices=free_indices,
         remaining_indices=remaining_indices,
@@ -130,6 +129,13 @@ def find_closest_xai(
         channel=channel,
         data_format=data_format,
     )
+
+
+     
+    assert all(idx in remaining_indices for idx in potential_xai), "potential_xai should be a subset of remaining_indices"
+
+    # collapse lower and upper bound of potential_xai
+
     # remove attackable dimensions from remaining_indices
     remaining_indices = [i for i in remaining_indices if not i in potential_xai]
     extra_free = []
@@ -145,6 +151,8 @@ def find_closest_xai(
                 model=model,
                 gt_label=gt_label,
                 input_sample=input_sample,
+                lower_bound=lower_bound,
+                upper_bound=upper_bound,
                 eps=eps,
                 free_indices=free_indices + extra_free,
                 remaining_indices=remaining_indices,
@@ -153,6 +161,7 @@ def find_closest_xai(
                 channel=channel,
                 data_format=data_format,
             )
+            assert all(idx in remaining_indices for idx in potential_xai_j), "potential_xai_j should be a subset of remaining_indices"
             potential_xai += potential_xai_j
             remaining_indices = [i for i in remaining_indices if not i in potential_xai]
         else:

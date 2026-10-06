@@ -13,11 +13,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies =[
     "numpy",
-    "cvxpy",
-    "keras>=3",
-    "decomon@git+https://github.com/airbus/decomon.git@refactor",
     "pandas"
-
 ]
 license = {text = "MIT"}
 dynamic = ["version"]
