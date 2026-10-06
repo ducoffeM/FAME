@@ -11,8 +11,6 @@ Tensor = torch.Tensor
 
 from fame.batch_free.utils import encode_matrix
 
-
-
 from auto_LiRPA.perturbations import Perturbation, PerturbationLpNorm
 from auto_LiRPA import BoundedModule, BoundedTensor
 
@@ -175,8 +173,6 @@ def free_with_binary_search(
         provably robust when perturbed together.
     """
 
-    import time
-
     if data_format == "channels_first":
         channel, H, W = input_shape
     else:
@@ -198,7 +194,6 @@ def free_with_binary_search(
         lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(device))
 
     # step 1: identify singleton that could be free
-    start_time = time.time()
     best_singleton: list[int]
     other_singleton: list[int]
     best_singleton, other_singleton = free_domain_with_abstract_interpretation_singleton(
@@ -217,9 +212,7 @@ def free_with_binary_search(
         lirpa_model=lirpa_model,
         method=method
     )
-    end_time = time.time()
-    if verbose:
-        print(f"Time taken for free_domain_with_abstract_interpretation_singleton: {end_time - start_time} seconds")
+
     if len(best_singleton):
         assert best_singleton[0] in potential_candidates, "best_singleton should be in potential_candidates"
 
@@ -261,8 +254,6 @@ def free_with_binary_search(
         device = next(model.parameters()).device
         C_gt: Tensor = torch.tensor(C_gt, dtype=torch.float32).to(device)
 
-        start_time = time.time()
-
         upper: np.array = get_abstract_output_domain(
             model=model,
             input_sample=input_sample_torch,
@@ -274,9 +265,7 @@ def free_with_binary_search(
             method=method
         )  # (1, n_out)
         is_safe: bool = np.max(upper) <= 0
-        end_time = time.time()
-        if verbose:
-            print(f"Time taken for get_abstract_output_domain: {end_time - start_time} seconds")
+
         if is_safe:
             assert [i in potential_candidates for i in traversal_order_indices], "traversal_order_indices should be a subset of potential_candidates"
             return traversal_order_indices
@@ -288,7 +277,6 @@ def free_with_binary_search(
             traversal_order_indices_part_1: list[int] = traversal_order_indices[n_singleton_half:]
 
             assert len(traversal_order_indices_part_0) + len(traversal_order_indices_part_1) == len(traversal_order_indices), "The two halves should sum up to the original list length"
-            start_time = time.time()
             # free as many as possible from this list with recursive calls of free_with_binary_search
             singleton_indices_part_0 = free_with_binary_search(
                 model=model,
@@ -306,18 +294,13 @@ def free_with_binary_search(
                 lirpa_model=lirpa_model,
                 method=method
             )
-            end_time = time.time()     
-            if verbose:
-                print(f"Time taken for free_with_binary_search on part 0: {end_time - start_time} seconds")
+
             if len(singleton_indices_part_0):
-                try:
-                    assert [i in traversal_order_indices_part_0 for i in singleton_indices_part_0], "singleton_indices_part_0 should be a subset of traversal_order_indices_part_0"
-                    assert len(np.unique(singleton_indices_part_0)) == len(singleton_indices_part_0), "singleton_indices_part_0 should contain unique indices"
-                except:
-                    import pdb; pdb.set_trace()
+                assert [i in traversal_order_indices_part_0 for i in singleton_indices_part_0], "singleton_indices_part_0 should be a subset of traversal_order_indices_part_0"
+                assert len(np.unique(singleton_indices_part_0)) == len(singleton_indices_part_0), "singleton_indices_part_0 should contain unique indices"
+
 
             # considering this singleton indices as part of the free indices try to free as much as possible the rest
-            start_time = time.time()
             singleton_indices_part_1 = free_with_binary_search(
                 model=model,
                 input_shape=input_shape,
@@ -334,15 +317,10 @@ def free_with_binary_search(
                 lirpa_model=lirpa_model,
                 method=method
             )
-            end_time = time.time()
-            if verbose:
-                print(f"Time taken for free_with_binary_search on part 1: {end_time - start_time} seconds")
+
             if len(singleton_indices_part_1):
-                try:
-                    assert [i in traversal_order_indices_part_1 for i in singleton_indices_part_1], "singleton_indices_part_1 should be a subset of traversal_order_indices_part_1"
-                    assert len(np.unique(singleton_indices_part_1)) == len(singleton_indices_part_1), "singleton_indices_part_1 should contain unique indices"
-                except:
-                    import pdb; pdb.set_trace()
+                assert [i in traversal_order_indices_part_1 for i in singleton_indices_part_1], "singleton_indices_part_1 should be a subset of traversal_order_indices_part_1"
+                assert len(np.unique(singleton_indices_part_1)) == len(singleton_indices_part_1), "singleton_indices_part_1 should contain unique indices"
 
             free_indices_combined = singleton_indices_part_0 + singleton_indices_part_1
             assert len(np.unique(free_indices_combined)) == len(free_indices_combined), "The combined free indices should contain unique indices"

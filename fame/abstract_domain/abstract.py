@@ -221,29 +221,14 @@ def get_abstract_output_domain_singleton(
                 lower_bound_batch[i, :, j] = lower_bound_c[:, j]
                 upper_bound_batch[i, :, j] = upper_bound_c[:, j]
             else:
-                try:
-                    lower_bound_batch[i, j, :] = lower_bound_c[j, :]
-                    upper_bound_batch[i, j, :] = upper_bound_c[j, :]
-                except:
-                    import pdb
+                lower_bound_batch[i, j, :] = lower_bound_c[j, :]
+                upper_bound_batch[i, j, :] = upper_bound_c[j, :]
 
-                    pdb.set_trace()
 
         # flatten lower_bound_batch and upper_bound_batch
-        """
-        lower_bound_batch = np.reshape(
-            lower_bound_batch, (-1, 1, n_in_with_channel)
-        )  # (batch_size, 1, n_in_with_channel)
-        upper_bound_batch = np.reshape(
-            upper_bound_batch, (-1, 1, n_in_with_channel)
-        )  # (batch_size, 1, n_in_with_channel)
-        """
         lower_bound_batch = np.reshape(lower_bound_batch, (-1, *input_shape))  # (batch_size, *input_shape)
         upper_bound_batch = np.reshape(upper_bound_batch, (-1, *input_shape))
         input_batch = np.reshape(input_batch, (-1, *input_shape))
-        #box: np.ndarray = np.concatenate(
-        #    [lower_bound_batch, upper_bound_batch], 1
-        #)  # (batch_size, 2, n_in_with_channel)
 
         # build your input domain
         # encode matrix C
@@ -339,7 +324,6 @@ def get_abstract_output_domain(
 
         # 2. Specify that we need the A matrices for output node with respect to input node
         needed_A_dict = {lirpa_model.output_name[0]: [input_node_name]}  
-        #import pdb; pdb.set_trace()
         _, ub_output, A_dict = lirpa_model.compute_bounds(x=(bounded_image,),method=method, \
                                                         return_A=True, needed_A_dict=needed_A_dict, C=C,\
                                                         bound_lower=False, bound_upper=True)

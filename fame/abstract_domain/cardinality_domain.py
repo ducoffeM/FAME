@@ -274,10 +274,7 @@ class XAIDomain(Perturbation):
             idx = torch.arange(max_k, device=A.device).unsqueeze(0)  # idx shape: (1, S)
             top_k_mask = (idx < self.eps_.unsqueeze(1)).unsqueeze(1)  # top_k_mask shape: (B, 1, S)
 
-            try:
-                l0_total = (candidate_sorted * top_k_mask).sum(dim=-1, keepdim=True)  # l0_total shape: (B, out_dim, 1)
-            except RuntimeError as e:
-                import pdb; pdb.set_trace()
+            l0_total = (candidate_sorted * top_k_mask).sum(dim=-1, keepdim=True)  # l0_total shape: (B, out_dim, 1)
         else:  # Scalar eps
             eps_val = math.ceil(self.eps_)  # Scalar int
             l0_total = candidate_sorted[:, :, :eps_val].sum(dim=-1, keepdim=True)  # l0_total shape: (B, out_dim, 1)

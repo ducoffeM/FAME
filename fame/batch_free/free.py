@@ -1,9 +1,6 @@
 from typing import Tuple
 import torch
-#import keras
 import numpy as np
-#from decomon import clone
-#from decomon.perturbation_domain import PerturbationDomain
 from auto_LiRPA.perturbations import Perturbation
 import torch.nn as nn
 from typing import TypeVar
@@ -26,9 +23,6 @@ from fame.batch_free.utils import encode_matrix
 from .greedy import get_greedy
 from .singleton import free_with_binary_search
 from .utils import get_b, get_free_mask, get_W, get_xai_mask
-
-
-import time
 
 def get_features_batch(
     model: Model,
@@ -101,7 +95,6 @@ def get_features_batch(
     xai_perturbation_domain: PerturbationDomain=None
     for k in range(0, len(cardinality), batch_size):
 
-        #print("loop", k, len(cardinality))
         k_stop = min(k+batch_size, len(cardinality))
         current_batch_size = k_stop - k
         # lower_bound/upper_bound/input_sample.shape = (n_in,)
@@ -346,8 +339,6 @@ def free_at_once_k_features(
 
     if len(card_index) == 0:
         # only trivial solutions
-        if np.max(abstract_free_set) > 1:
-            import pdb; pdb.set_trace()
         return abstract_free_set
 
     # kept only indices from card_index
@@ -375,8 +366,6 @@ def free_at_once_k_features(
 
     if len(index_knapsack) == 0:
         # abstract set of irrelevant features is empty
-        if np.max(abstract_free_set) > 1:
-            import pdb; pdb.set_trace()
         return abstract_free_set
 
     W = W[index_knapsack]  # (b_g, n_in_wo_channel, n_out)
@@ -398,8 +387,6 @@ def free_at_once_k_features(
     else:
         raise ValueError("method {} is unknown".format(method))
 
-    if np.max(abstract_free_set) > 1:
-        import pdb; pdb.set_trace()
     return abstract_free_set
 
 
@@ -475,12 +462,8 @@ def free_iteratively_k_features(
     lower_bound_input: np.ndarray = np.copy(lower_bound_input)
     upper_bound_input: np.ndarray = np.copy(upper_bound_input)
 
-    #cardinality: np.ndarray = np.array([i for i in range(1, n_in_wo_channel - len(free_indices))])
     cardinality: np.ndarray = np.arange(1, n_in_wo_channel-len(free_indices)- len(xai_indices), step_cardinality)
 
-    #print("free_iteratively_k_features: cardinality", len(cardinality), "len(free_indices)", len(free_indices), "len(xai_indices)", len(xai_indices))
-
-    start_time = time.time()
 
     abstract_set: np.ndarray = free_at_once_k_features(
         model=model,
@@ -566,11 +549,8 @@ def free_iteratively_k_features(
     # while we find one singleton (we add the one with the least impact according to abstract bound)
     # finish with singleton search
     # warning check lower_bound_input, upper_bound_input
-    end_time = time.time()
-    #print(f"Time taken for free_at_once_k_features: {end_time - start_time} seconds")
 
-    start_time = time.time()
-    singleton_free_index: list
+$    singleton_free_index: list
     singleton_free_index = free_with_binary_search(
         model=model,
         input_shape = input_shape,
@@ -587,8 +567,6 @@ def free_iteratively_k_features(
         method=lirpa_method,
         verbose=verbose
     )
-    end_time = time.time()
-    #print(f"Time taken for free_binary_search: {end_time - start_time} seconds")
 
     return free_indices, singleton_free_index
     

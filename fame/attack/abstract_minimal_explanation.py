@@ -18,7 +18,6 @@ def find_closest_xai_with_dichotomy(
     eps: float = 0.0,
     xai_indices: list[int] = [],
     free_indices: list[int] = [],
-    # remaining_indices:list[int] =[],
     method: str = "fgsm",
     device: str = "mps",
     channel: int = 1,
@@ -103,8 +102,6 @@ def find_closest_xai_with_dichotomy(
         lower_bound=lower_bound,
         upper_bound=upper_bound,
         eps=eps,
-        #free_indices=free_indices + remaining_indices[1:],
-        #remaining_indices=remaining_indices[:1],
         free_indices=free_indices,
         remaining_indices=remaining_indices,
         channel=channel,
@@ -140,6 +137,8 @@ def find_closest_xai_with_dichotomy(
     )
 
     assert set(xai_set_init).isdisjoint(set(free_indices)), "xai_set_init should not overlap with free_indices"
+
+    return xai_set_init, remaining_indices
 
     # remove them from remaining_indices
     remaining_indices_init: list[int] = [i for i in remaining_indices if not i in xai_set_init]
@@ -182,7 +181,6 @@ def find_closest_xai_with_dichotomy(
 
     # attack on the second half
     # solution A
-    print('C')
     xai_A = find_singleton_feature_2_add(
         model=model,
         gt_label=gt_label,
@@ -201,7 +199,6 @@ def find_closest_xai_with_dichotomy(
 
     # if len(xai_A)==0, then freeing  remaining_indices_part_0 is not enough
     if len(xai_A) == 0:
-        print('D')
         xai_C, remaining_C = find_closest_xai_with_dichotomy(
             model=model,
             gt_label=gt_label,
@@ -232,7 +229,6 @@ def find_closest_xai_with_dichotomy(
     xai_B: list[int]
     remaining_B: list[int]
 
-    print('E')
     xai_B, remaining_B = find_closest_xai_with_dichotomy(
         model=model,
         gt_label=gt_label,
@@ -254,7 +250,6 @@ def find_closest_xai_with_dichotomy(
     assert set(xai_B).isdisjoint(set(free_indices)), "xai_B should not overlap with free_indices"
 
     # we attack again xai_A features
-    print('D')
     xai_B_A: list[int] = find_singleton_feature_2_add(
         model=model,
         gt_label=gt_label,
@@ -358,8 +353,6 @@ def find_closest_xai(
     """
 
     n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
-    #print('A', len(free_indices), len(np.unique(free_indices)), len(xai_indices), len(np.unique(xai_indices)))
-    #print('toto', input_sample.shape, lower_bound.shape, upper_bound.shape)
     potential_xai_d, _ = find_closest_xai_with_dichotomy(
         model=model,
         gt_label=gt_label,
@@ -377,9 +370,7 @@ def find_closest_xai(
         traversal_order=traversal_order,
     )
 
-    #print('B', len(free_indices), len(np.unique(free_indices)), len(xai_indices), len(np.unique(xai_indices)))
     assert set(potential_xai_d).isdisjoint(set(free_indices)), "potential_xai_d should not overlap with free_indices"
-    #print('AA', len(free_indices))
 
 
     # relaunch with sequential (longer but tighter so we do it on a restricted domain)
@@ -400,10 +391,7 @@ def find_closest_xai(
             n_class=n_class,
             traversal_order=traversal_order,
         )
-        #print('C', len(free_indices), len(np.unique(free_indices)), len(xai_indices), len(np.unique(xai_indices)))
         assert set(potential_xai_s).isdisjoint(set(free_indices)), "potential_xai_d should not overlap with free_indices"
-
-        #print('AB', len(free_indices))
 
         return potential_xai_d + potential_xai_s, extra_free_s
     else:
