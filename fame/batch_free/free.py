@@ -1,7 +1,7 @@
 from typing import Tuple
 import torch
 import numpy as np
-from auto_LiRPA.perturbations import Perturbation
+from auto_LiRPA.perturbations import Perturbation, PerturbationLpNorm
 import torch.nn as nn
 from typing import TypeVar
 
@@ -156,9 +156,11 @@ def get_features_batch(
         w_u: np.ndarray
         b_u: np.ndarray
         upper: np.ndarray
+
         w_u, b_u, upper = get_abstract_output_domain(model=model, input_sample=input_sample_batch, \
                                                     C=C_gt,perturbation=xai_perturbation_domain, \
                                                     method=method, lirpa_model=lirpa_model)
+        
 
         #w_u (current_batch_size, n_in_with_channel, n_class-1)
         #b_u = (current_batch_size, n_class-1)
@@ -490,7 +492,6 @@ def free_iteratively_k_features(
         ):  # we have found new input features to free among remaining indices
             nb_free = int(abstract_set.sum(-1).max())
 
-            print('free at once', nb_free)
             if verbose:
                 print('free at once', nb_free)
             i_solution = np.argmax(
@@ -502,9 +503,6 @@ def free_iteratively_k_features(
                 for (i, k) in enumerate(abstract_set[i_solution])
                 if k == 1 and not i in free_indices
             ]
-
-            print(len(free_indices), 'features freed so far', free_indices)
-
 
             # update cardinality: we can only free up to the max of features we have successfully freed so far
             # because recursively we keep expanding the initial abstract domain
@@ -550,7 +548,7 @@ def free_iteratively_k_features(
     # finish with singleton search
     # warning check lower_bound_input, upper_bound_input
 
-$    singleton_free_index: list
+    singleton_free_index: list
     singleton_free_index = free_with_binary_search(
         model=model,
         input_shape = input_shape,

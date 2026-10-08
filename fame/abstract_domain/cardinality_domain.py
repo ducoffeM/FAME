@@ -84,7 +84,7 @@ class XAIDomain(Perturbation):
         self.x_U = x_U  # self.x_U shape: (B, C, H, W)
 
 
-    def concretize_patches(self, A, x, x_L, x_U, xai_full, free_full, sign=1):
+    def concretize_patches_card(self, A, x, x_L, x_U, xai_full, free_full, sign=1):
         """
         Line-by-line symbolic shape tracking.
         """
@@ -152,7 +152,7 @@ class XAIDomain(Perturbation):
 
 
 
-    def concretize_dense(self, A, x, x_L, x_U, xai_full, free_full, sign=1):
+    def concretize_dense_card(self, A, x, x_L, x_U, xai_full, free_full, sign=1):
 
         batch_size = x.shape[0]  # B (scalar int)
         out_dim = np.prod(A.shape)//(np.prod(x.shape))  # out_dim (scalar int)
@@ -240,6 +240,9 @@ class XAIDomain(Perturbation):
 
     def concretize(self, x, A, sign=-1, aux=None):
 
+        bound_ = super().concretize(x, A, sign=sign, aux=aux)
+        return bound_
+
         batch_size = x.shape[0]  # B (scalar int)
         x_L = self.x_L if self.x_L is not None else torch.zeros_like(x)  # x_L shape: (B, C, H, W)
         x_U = self.x_U if self.x_U is not None else torch.ones_like(x)  # x_U shape: (B, C, H, W)
@@ -254,13 +257,13 @@ class XAIDomain(Perturbation):
             # raise error if data_format is not channel_first
             if self.data_format not in ["channels_first", "nchw"]:
                 raise ValueError("Patches concretization requires 'channels_first' / 'nchw' data format.")
-            candidate_flat, free_total, center = self.concretize_patches(A, x, x_L, x_U, xai_full, free_full, sign=sign)  
+            candidate_flat, free_total, center = self.concretize_patches_card(A, x, x_L, x_U, xai_full, free_full, sign=sign)  
             # candidate_flat shape: (B, out_dim, S), free_total shape: (B, out_dim, 1)
         # =========================================================================
         # PATH 2: Dense Matrix Fallback
         # =========================================================================
         else:
-            candidate_flat, free_total, center = self.concretize_dense(A, x, x_L, x_U, xai_full, free_full, sign=sign) 
+            candidate_flat, free_total, center = self.concretize_dense_card(A, x, x_L, x_U, xai_full, free_full, sign=sign) 
             # candidate_flat shape: (B, out_dim, S), free_total shape: (B, out_dim, 1)
 
         # =========================================================================
@@ -282,8 +285,9 @@ class XAIDomain(Perturbation):
         total_diff = free_total + l0_total  # total_diff shape: (B, out_dim, 1)
         bound = (center + sign * total_diff).squeeze(-1)  # bound shape: (B, out_dim)
 
+        bound.view(bound.shape[0], -1)  # Return shape: (B, out_dim)
 
-        return bound.view(bound.shape[0], -1)  # Return shape: (B, out_dim)
+        return bound
 
 
 def split_patches(A):

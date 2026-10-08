@@ -19,7 +19,7 @@ class Reshape(nn.Module):
 
 def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: tuple, gt_label: int,n_class: int, \
                 eps: float, lower_bound_input: np.ndarray = None, upper_bound_input: np.ndarray = None, \
-                data_format: str = "channels_first", free_methods=["CROWN"], xai_methods=['apgd'], traversal_order="lirpa", verbose:int=0):
+                data_format: str = "channels_first", free_methods=["CROWN"], xai_methods=['pgd'], traversal_order="lirpa", verbose:int=0):
     """
     Get the FAME XAI indices for a given model and input sample.
 

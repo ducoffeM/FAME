@@ -175,6 +175,5 @@ def find_singleton_feature_2_add(
         device=device,
     )  # (batch_size,)
 
-
     xai_set: list[int] = [remaining_indices[j] for j in range(batch_size) if adv_pred[j] != gt_label]
     return xai_set

@@ -271,6 +271,8 @@ def get_abstract_output_domain(
     data_format: str = "channels_first",
     method="CROWN",
     lirpa_model: BoundedModule = None,
+    bound_upper:bool=True,
+    bound_lower:bool=False,
 ) -> tuple[np.ndarray]:
     """Computes the certified output bounds for a single input domain.
 
@@ -324,24 +326,37 @@ def get_abstract_output_domain(
 
         # 2. Specify that we need the A matrices for output node with respect to input node
         needed_A_dict = {lirpa_model.output_name[0]: [input_node_name]}  
-        _, ub_output, A_dict = lirpa_model.compute_bounds(x=(bounded_image,),method=method, \
+        lower_output, upper_output, A_dict = lirpa_model.compute_bounds(x=(bounded_image,),method=method, \
                                                         return_A=True, needed_A_dict=needed_A_dict, C=C,\
-                                                        bound_lower=False, bound_upper=True)
+                                                        bound_lower=bound_lower, bound_upper=bound_upper)
         A_info = A_dict[lirpa_model.output_name[0]][input_node_name]
 
-        A_upper = A_info['uA']     # Upper affine slope matrix,
-        b_upper = A_info['ubias']  # Upper affine bias,
+        if bound_upper:
+            A = A_info['uA']     # Upper affine slope matrix,
+            b = A_info['ubias']  # Upper affine bias,
+        else:
+            A = A_info['lA']     # Lower affine slope matrix,
+            b = A_info['lbias']  # Lower affine bias,
         
         # detach and cast to numpy arrays
 
-        w_u = A_upper.detach().cpu().numpy()
-        b_u = b_upper.detach().cpu().numpy()    
+        w = A.detach().cpu().numpy()
+        b = b.detach().cpu().numpy()    
 
         # reshape w_u to (batch, n_in_with_channel, n_class-1)
-        w_u = np.reshape(w_u, (w_u.shape[0], -1, b_u.shape[1]))
-        return w_u, b_u, ub_output.detach().cpu().numpy()
+        w = np.reshape(w, (w.shape[0], -1, b.shape[1]))
+
+        if bound_upper:
+            return w, b, upper_output.detach().cpu().numpy()
+        else:
+            return w, b, lower_output.detach().cpu().numpy()
     else:
-        _, ub_output = lirpa_model.compute_bounds(x=(bounded_image,),method=method, C=C, bound_lower=False, bound_upper=True)
-        return ub_output.detach().cpu().numpy()
+        if bound_upper:
+            _, ub_output = lirpa_model.compute_bounds(x=(bounded_image,),method=method, C=C, bound_lower=False, bound_upper=True)
+            return ub_output.detach().cpu().numpy()
+        else:
+            lb_output, _ = lirpa_model.compute_bounds(x=(bounded_image,),method=method, C=C, bound_lower=True, bound_upper=False)
+            return lb_output.detach().cpu().numpy()
+
 
 
