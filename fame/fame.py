@@ -16,10 +16,18 @@ class Reshape(nn.Module):
     def forward(self, x):
         return x.reshape(*self.shape)
 
+def get_eps_value(eps):
+    if isinstance(eps, (float, int)):
+        return eps
+    if hasattr(eps, "max"):
+        val = eps.max()
+        return val.item() if hasattr(val, "item") else val
+    return max(eps)
+
 
 def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: tuple, gt_label: int,n_class: int, \
                 eps: float, lower_bound_input: np.ndarray = None, upper_bound_input: np.ndarray = None, \
-                data_format: str = "channels_first", free_methods=["CROWN"], xai_methods=['pgd'], traversal_order="lirpa", verbose:int=0):
+                data_format: str = "channels_first", free_methods=["CROWN"], xai_methods=['pgd'], traversal_order="lirpa", batch_size_free=10, step_cardinality=1, batch_size_xai=-1, verbose:int=0):
     """
     Get the FAME XAI indices for a given model and input sample.
 
@@ -53,16 +61,18 @@ def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: 
     device = next(model.parameters()).device
 
     flatten_image = np.reshape(input_sample, (channel,H*W))
-    flatten_model =  nn.Sequential(Reshape(-1, *input_shape), model)
-    flatten_model.eval()
-    flatten_model.to(next(model.parameters()).device)
-
+    
 
     flatten_lower_bound = np.reshape(lower_bound_input, (channel,H*W)) if lower_bound_input is not None else flatten_image - eps
     flatten_upper_bound = np.reshape(upper_bound_input, (channel,H*W)) if upper_bound_input is not None else flatten_image + eps
 
     free_indices:list = []
     xai_indices:list = []
+    is_scalar_eps = isinstance(eps, (float, int))
+    if is_scalar_eps:
+        eps_free:float = eps
+    else:
+        eps_free:float = max(eps)
 
     for free_method in free_methods:
 
@@ -80,16 +90,24 @@ def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: 
                 n_class = n_class,
                 method=free_method,
                 verbose=verbose,
+                batch_size_free=batch_size_free,
+                step_cardinality=step_cardinality
             )
 
         free_indices:list = free_indices_cardinality+free_indices_binary
 
 
     extra_free=[] # samples that are used to create attacks, thus we cannot put them in xai
+    if len(xai_methods):
+        flatten_model =  nn.Sequential(Reshape(-1, *input_shape), model)
+        flatten_model.eval()
+        flatten_model.to(next(model.parameters()).device)
+
     for xai_method in xai_methods:
 
         if verbose:
             print("xai_method: ", xai_method)
+
 
         potential_xai, unknown = find_closest_xai(
                     model=flatten_model,
@@ -106,6 +124,7 @@ def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: 
                     data_format=data_format,
                     n_class=n_class,
                     traversal_order="lirpa",
+                    batch_size_xai=batch_size_xai,
                     verbose=verbose,
             )
         xai_indices:list = list(set(potential_xai + xai_indices))

@@ -25,6 +25,7 @@ def find_closest_xai_with_dichotomy(
     n_class: int = 10,
     traversal_order: str = "greedy",
     v_optimal:bool=False,
+    batch_size_xai:int = -1,
     verbose:int=0
 ) -> tuple[list[int], list[int]]:
     """Finds a robust feature set using a recursive divide-and-conquer algorithm.
@@ -90,12 +91,10 @@ def find_closest_xai_with_dichotomy(
         return [], remaining_indices
 
 
-
     if len(remaining_indices) == 0:
         # best solution is
         assert len(xai_indices + free_indices) == n_in_wo_channel, "missing input features"
         return xai_indices, free_indices
-
 
     # start by attacking everything except xai_indices
     input_sample_everything, lower_bound_everything, upper_bound_everything = get_attacks_bounds(
@@ -108,7 +107,6 @@ def find_closest_xai_with_dichotomy(
         channel=channel,
         data_format=data_format,
     )
-
 
     xai_set_init = find_singleton_feature_2_add(
         model=model,
@@ -123,6 +121,7 @@ def find_closest_xai_with_dichotomy(
         device=device,
         channel=channel,
         data_format=data_format,
+        batch_size_xai=batch_size_xai
     )
     assert set(xai_set_init).isdisjoint(set(free_indices)), "xai_set_init should not overlap with free_indices"
 
@@ -150,6 +149,7 @@ def find_closest_xai(
     traversal_order: str = "greedy",
     v_optimal:bool=False,
     verbose:int=0,
+    batch_size_xai:int=-1,
 ) -> tuple[list[int], list[int]]:
     """Finds a minimal robust feature set using a two-stage search process.
 
@@ -192,6 +192,7 @@ def find_closest_xai(
     """
 
     n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
+
     potential_xai_d, _ = find_closest_xai_with_dichotomy(
         model=model,
         gt_label=gt_label,
@@ -207,7 +208,8 @@ def find_closest_xai(
         data_format=data_format,
         n_class=n_class,
         traversal_order=traversal_order,
-        v_optimal=v_optimal
+        v_optimal=v_optimal,
+        batch_size_xai=batch_size_xai
     )
 
     assert set(potential_xai_d).isdisjoint(set(free_indices)), "potential_xai_d should not overlap with free_indices"

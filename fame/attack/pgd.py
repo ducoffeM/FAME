@@ -85,6 +85,8 @@ def projected_gradient_descent(
         )
     if norm not in [np.inf, 2]:
         raise ValueError("Norm order must be either np.inf or 2.")
+
+        
     if eps < 0:
         raise ValueError("eps must be greater than or equal to 0, got {} instead".format(eps))
     if eps == 0:

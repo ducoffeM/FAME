@@ -67,7 +67,12 @@ def attack(
             y=gt_label_t,
         )
     elif method=="pgd":
-        eps_iter = eps / 10.0  # arbitraty (do a config file)
+        is_scalar_eps = isinstance(eps, (float, int))
+        if is_scalar_eps:
+            eps_iter = eps / 10.0  # arbitraty (do a config file)
+        else:
+            eps_iter = eps.max() / 10.0
+            eps = max(eps)
         nb_iter = 10  # arbitraty (do a config file)
         x_adv_class, _ = projected_gradient_descent(
             model_fn=model,
@@ -84,6 +89,8 @@ def attack(
         )
     elif method=="apgd":
         nb_iter = 50  # Number of APGD iterations
+        is_scalar_eps = isinstance(eps, (float, int))
+        eps = max(eps)
 
         x_adv_class, _ = autopgd_attack(
             model_fn=model,
@@ -117,6 +124,7 @@ def find_singleton_feature_2_add(
     method: str = "fgsm",
     device: str = "cuda",
     channel: int = 1,
+    batch_size_xai:int = -1,
     data_format="channels_first",
 ) -> list[int]:
     """Identifies individual features that can cause an adversarial attack.
@@ -162,18 +170,37 @@ def find_singleton_feature_2_add(
         channel=channel,
         data_format=data_format,
     )
-    batch_size: int = len(remaining_indices)
+    if batch_size_xai <0:
+        batch_size: int = len(remaining_indices)
+    else:
+        batch_size = batch_size_xai
 
-    adv_pred: np.ndarray = attack(
-        model=model,
-        input_sample_batch=input_sample_batch,
-        lower_bound_batch=lower_bound_batch,
-        upper_bound_batch=upper_bound_batch,
-        gt_label=gt_label,
-        eps=eps,
-        method=method,
-        device=device,
-    )  # (batch_size,)
 
-    xai_set: list[int] = [remaining_indices[j] for j in range(batch_size) if adv_pred[j] != gt_label]
+    xai_set: list[int] = []
+    total_samples = len(remaining_indices)
+
+    for i in range(0, total_samples, batch_size):
+        # Slice the chunk (handles the final smaller batch cleanly)
+        curr_inputs = input_sample_batch[i : i + batch_size]
+        curr_lbs = lower_bound_batch[i : i + batch_size]
+        curr_ubs = upper_bound_batch[i : i + batch_size]
+        curr_indices = remaining_indices[i : i + batch_size]
+
+        adv_pred: np.ndarray = attack(
+            model=model,
+            input_sample_batch=curr_inputs,
+            lower_bound_batch=curr_lbs,
+            upper_bound_batch=curr_ubs,
+            gt_label=gt_label,
+            eps=eps,
+            method=method,
+            device=device,
+        )
+
+        # Collect indices where attack successfully changed the prediction
+        xai_set.extend([
+            curr_indices[j]
+            for j in range(len(curr_indices))
+            if adv_pred[j] != gt_label
+        ])
     return xai_set

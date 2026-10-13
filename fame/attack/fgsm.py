@@ -66,10 +66,24 @@ def fast_gradient_method(
 
     if norm not in [np.inf, 1, 2]:
         raise ValueError("Norm order must be either np.inf, 1, or 2, got {} instead.".format(norm))
-    if eps < 0:
-        raise ValueError("eps must be greater than or equal to 0, got {} instead".format(eps))
-    if eps == 0:
-        return x
+
+    # 1. Validate eps
+    is_scalar_eps = isinstance(eps, (float, int))
+    if is_scalar_eps:
+        if eps < 0:
+            raise ValueError(f"eps must be greater than or equal to 0, got {eps} instead.")
+        if eps == 0:
+            return x
+    else:
+        eps_t = torch.as_tensor(eps, dtype=x.dtype, device=x.device)
+        if torch.any(eps_t < 0):
+            raise ValueError(f"All elements of eps must be >= 0, got {eps}")
+        if torch.all(eps_t == 0):
+            return x
+        if len(eps_t) != x.shape[1]:
+            raise ValueError(
+                f"Length of eps ({len(eps_t)}) does not match channels in x ({x.shape[1]})."
+            )
 
     asserts = []
 
@@ -97,7 +111,17 @@ def fast_gradient_method(
 
     # Define gradient of loss wrt input
     loss.backward()
-    optimal_perturbation = optimize_linear(x.grad, eps, norm)
+
+    # 3. Compute perturbation (scalar vs per-channel stack)
+    if is_scalar_eps:
+        optimal_perturbation = optimize_linear(x.grad, eps, norm)
+    else:
+        # Assumes channels_first: batch is dim 0, channels are dim 1
+        optimal_perturbations = [
+            optimize_linear(x.grad[:, i], eps_t[i].item(), norm)
+            for i in range(x.shape[1])
+        ]
+        optimal_perturbation = torch.stack(optimal_perturbations, dim=1)
 
     # Add perturbation to original example to obtain adversarial example
     adv_x = x + optimal_perturbation

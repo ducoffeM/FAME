@@ -59,7 +59,7 @@ def get_abstract_model(
         model = model.to(device)
         dummy_input = dummy_input.to(device)
     device = next(model.parameters()).device
-    lirpa_model:BoundedModule = BoundedModule(model, torch.empty_like(dummy_input), device=device, bound_opts={'conv_mode': conv_mode})
+    lirpa_model:BoundedModule = BoundedModule(model, torch.empty_like(dummy_input), device=device, bound_opts={'conv_mode': conv_mode, "sparse_intermediate_bounds": True})
     lirpa_model.set_bound_opts({'optimize_bound_args': {'iteration': 20, 'lr_alpha': 0.1}})
 
     return lirpa_model
@@ -326,9 +326,11 @@ def get_abstract_output_domain(
 
         # 2. Specify that we need the A matrices for output node with respect to input node
         needed_A_dict = {lirpa_model.output_name[0]: [input_node_name]}  
+
         lower_output, upper_output, A_dict = lirpa_model.compute_bounds(x=(bounded_image,),method=method, \
                                                         return_A=True, needed_A_dict=needed_A_dict, C=C,\
                                                         bound_lower=bound_lower, bound_upper=bound_upper)
+        
         A_info = A_dict[lirpa_model.output_name[0]][input_node_name]
 
         if bound_upper:

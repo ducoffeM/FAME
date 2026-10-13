@@ -142,7 +142,6 @@ def get_features_batch(
             xai_perturbation_domain.x_L = lower_bound_batch
             xai_perturbation_domain.x_U = upper_bound_batch
 
-
         # build your input domain
         # encode matrix C
         C_gt: np.ndarray = np.repeat(
@@ -160,17 +159,21 @@ def get_features_batch(
         w_u, b_u, upper = get_abstract_output_domain(model=model, input_sample=input_sample_batch, \
                                                     C=C_gt,perturbation=xai_perturbation_domain, \
                                                     method=method, lirpa_model=lirpa_model)
-        
+
 
         #w_u (current_batch_size, n_in_with_channel, n_class-1)
         #b_u = (current_batch_size, n_class-1)
         #upper = (current_batch_size, n_class-1)
 
-
         all_w_u.append(w_u)
         all_b_u.append(b_u)
         all_upper.append(upper)
         all_box.append(box)
+
+        # check really fast if the last candidate can free something, else stop
+        check_batch = get_card_free_set(w_u[-1:], b_u[-1:], upper[-1:], box[-1:], n_in_wo_channel, [], free_indices, cardinality[k_stop-1:k_stop], channel, data_format, method="greedy")
+        if check_batch.sum(-1).max() == 0:
+            break
 
     w_u = np.concatenate(all_w_u, axis=0) # (|cardinality|, n_in_with_channel, n_class-1)
     b_u = np.concatenate(all_b_u, axis=0) # (|cardinality|, n_class-1)
@@ -179,123 +182,16 @@ def get_features_batch(
 
     return w_u, b_u, upper, box
 
-
-def free_at_once_k_features(
-    model: Model,
-    input_shape: Tuple[int],
-    gt_label: int,
-    input_sample: np.ndarray,
-    lower_bound_input: np.ndarray,
-    upper_bound_input: np.ndarray,
-    xai_indices: list[int] = [],
-    free_indices: list[int] = [],
-    cardinality: np.ndarray = None,
-    data_format: str = "channels_first",
-    n_class: int = 10,
-    method: str = "greedy",
-    lirpa_method="CROWN",
-    batch_size_free = 1,
-    verbose: int = 0,
-) -> np.ndarray:
-    """Finds the largest safe set of features, given cardinality constraints.
-
-    This function attempts to find the largest set of features that can be added
-    to the "robust set" (i.e., allowed to be perturbed) without violating the
-    model's overall robustness. It solves this for a batch of different L0-norm
-    cardinality constraints (`k`).
-
-    The process involves:
-    1.  Using abstract interpretation (`get_features_batch`) to obtain an affine
-        approximation of the network's output logits.
-    2.  Formulating a 0-1 Knapsack-like optimization problem from this approximation.
-        The goal is to select the maximum number of features to "free" while
-        ensuring the certified upper bound on logit differences remains non-positive.
-    3.  Solving this problem using either an exact MILP solver or a fast greedy heuristic.
-
-    Args:
-        pytorch_model: The pytorch model to analyze.
-        gt_label: The ground-truth class label.
-        input_sample: The nominal input point.
-        lower_bound_input: The lower bounds of the L-infinity perturbation.
-        upper_bound_input: The upper bounds of the L-infinity perturbation.
-        xai_indices: Candidate features for the knapsack problem.
-        free_indices: Features that are always considered robust/perturbed.
-        cardinality: A numpy array where each element specifies the L0 budget (`k`)
-            for the corresponding item in the batch.
-        channel: The number of channels in the input data.
-        data_format: The data format, "channels_first" or "channels_last".
-        n_class: The number of output classes.
-        method: The optimization method to use: "milp" for an exact solution or
-            "greedy" for a fast approximation.
-        verbose: Verbosity level.
-
-    Returns:
-        A numpy array of shape `(batch_size, n_features)`, where each row is a
-        binary mask indicating the set of features that can be safely made robust
-        for the corresponding cardinality constraint.
-    """
-    lower_bound: np.ndarray = np.copy(lower_bound_input) + 0.0
-    upper_bound: np.ndarray = np.copy(upper_bound_input) + 0.0
-
-    if data_format == "channels_first":
-        n_in_wo_channel: int = input_sample.shape[-1]
-        channel: int = input_sample.shape[0]
-    else:
-        n_in_wo_channel: int = input_sample.shape[0] 
-        channel: int = input_sample.shape[-1]
-
-
-    input_: np.ndarray
-    if data_format == "channels_first":
-        lower_bound = np.reshape(lower_bound, (channel, n_in_wo_channel))  # (channel, n_in_wo_channel)
-        upper_bound = np.reshape(upper_bound, (channel, n_in_wo_channel))
-        input_: np.ndarray = np.reshape(np.copy(input_sample) + 0.0, (channel, n_in_wo_channel))
-    else:
-        lower_bound = np.reshape(lower_bound, (n_in_wo_channel, channel))  # (n_in_wo_channel, channel)
-        upper_bound = np.reshape(upper_bound, (n_in_wo_channel, channel))
-        input_: np.ndarray = np.reshape(np.copy(input_sample) + 0.0, (n_in_wo_channel, channel))
-
-    # freeze xai features to the nominal value
-    if len(xai_indices):
-        if data_format == "channels_first":
-            lower_bound[:, xai_indices] = input_[:, xai_indices]
-            upper_bound[:, xai_indices] = input_[:, xai_indices]
-        else:
-            lower_bound[xai_indices, :] = input_[xai_indices, :]
-            upper_bound[xai_indices, :] = input_[xai_indices, :]
-
-    # reflatten
-    batch_size: int = len(cardinality)
-    w_u: np.ndarray
-    b_u: np.ndarray
-    box: np.ndarray
-
-    w_u, b_u, upper, box = get_features_batch(
-        model=model,
-        input_shape=input_shape,
-        gt_label=gt_label,
-        input_sample=input_, # (n_in_wo_channel, channel) or (channel, n_in_wo_channel)
-        lower_bound_input=lower_bound,
-        upper_bound_input=upper_bound,
-        free_indices=free_indices,
-        cardinality=cardinality,
-        data_format=data_format,
-        n_class=n_class,
-        method=lirpa_method,
-        batch_size=batch_size_free
-    )
-
+def get_card_free_set(w_u, b_u, upper, box, n_in_wo_channel, xai_indices, free_indices, cardinality, channel, data_format, method="greedy"):
 
     # w_u (batch_size, n_in_with_channel, n_class-1)
     # b_u (batch_size, n_class-1)
     # upper (batch_size, n_class-1)
     # box (batch_size, 3, n_in_with_channel)
+    batch_size = w_u.shape[0]
 
     abstract_free_set: np.ndarray = np.zeros((batch_size, n_in_wo_channel))  # fill with 1 if in the solution
 
-    if verbose:
-        print("upper", upper)
-        print("b", b_u)
 
     w_u_pos: np.ndarray = np.maximum(w_u, 0.0)  # (batch_size, n_in_with_channel, n_class-1)
     w_u_neg: np.ndarray = np.minimum(w_u, 0.0)  # (batch_size, n_in_with_channel, n_class-1)
@@ -388,6 +284,121 @@ def free_at_once_k_features(
 
     else:
         raise ValueError("method {} is unknown".format(method))
+
+    return abstract_free_set
+
+    
+
+def free_at_once_k_features(
+    model: Model,
+    input_shape: Tuple[int],
+    gt_label: int,
+    input_sample: np.ndarray,
+    lower_bound_input: np.ndarray,
+    upper_bound_input: np.ndarray,
+    xai_indices: list[int] = [],
+    free_indices: list[int] = [],
+    cardinality: np.ndarray = None,
+    data_format: str = "channels_first",
+    n_class: int = 10,
+    method: str = "greedy",
+    lirpa_method="CROWN",
+    batch_size_free = 1,
+    verbose: int = 0,
+) -> np.ndarray:
+    """Finds the largest safe set of features, given cardinality constraints.
+
+    This function attempts to find the largest set of features that can be added
+    to the "robust set" (i.e., allowed to be perturbed) without violating the
+    model's overall robustness. It solves this for a batch of different L0-norm
+    cardinality constraints (`k`).
+
+    The process involves:
+    1.  Using abstract interpretation (`get_features_batch`) to obtain an affine
+        approximation of the network's output logits.
+    2.  Formulating a 0-1 Knapsack-like optimization problem from this approximation.
+        The goal is to select the maximum number of features to "free" while
+        ensuring the certified upper bound on logit differences remains non-positive.
+    3.  Solving this problem using either an exact MILP solver or a fast greedy heuristic.
+
+    Args:
+        pytorch_model: The pytorch model to analyze.
+        gt_label: The ground-truth class label.
+        input_sample: The nominal input point.
+        lower_bound_input: The lower bounds of the L-infinity perturbation.
+        upper_bound_input: The upper bounds of the L-infinity perturbation.
+        xai_indices: Candidate features for the knapsack problem.
+        free_indices: Features that are always considered robust/perturbed.
+        cardinality: A numpy array where each element specifies the L0 budget (`k`)
+            for the corresponding item in the batch.
+        channel: The number of channels in the input data.
+        data_format: The data format, "channels_first" or "channels_last".
+        n_class: The number of output classes.
+        method: The optimization method to use: "milp" for an exact solution or
+            "greedy" for a fast approximation.
+        verbose: Verbosity level.
+
+    Returns:
+        A numpy array of shape `(batch_size, n_features)`, where each row is a
+        binary mask indicating the set of features that can be safely made robust
+        for the corresponding cardinality constraint.
+    """
+    lower_bound: np.ndarray = np.copy(lower_bound_input) + 0.0
+    upper_bound: np.ndarray = np.copy(upper_bound_input) + 0.0
+
+    if data_format == "channels_first":
+        n_in_wo_channel: int = input_sample.shape[-1]
+        channel: int = input_sample.shape[0]
+    else:
+        n_in_wo_channel: int = input_sample.shape[0] 
+        channel: int = input_sample.shape[-1]
+
+    input_: np.ndarray
+    if data_format == "channels_first":
+        lower_bound = np.reshape(lower_bound, (channel, n_in_wo_channel))  # (channel, n_in_wo_channel)
+        upper_bound = np.reshape(upper_bound, (channel, n_in_wo_channel))
+        input_: np.ndarray = np.reshape(np.copy(input_sample) + 0.0, (channel, n_in_wo_channel))
+    else:
+        lower_bound = np.reshape(lower_bound, (n_in_wo_channel, channel))  # (n_in_wo_channel, channel)
+        upper_bound = np.reshape(upper_bound, (n_in_wo_channel, channel))
+        input_: np.ndarray = np.reshape(np.copy(input_sample) + 0.0, (n_in_wo_channel, channel))
+
+    # freeze xai features to the nominal value
+    if len(xai_indices):
+        if data_format == "channels_first":
+            lower_bound[:, xai_indices] = input_[:, xai_indices]
+            upper_bound[:, xai_indices] = input_[:, xai_indices]
+        else:
+            lower_bound[xai_indices, :] = input_[xai_indices, :]
+            upper_bound[xai_indices, :] = input_[xai_indices, :]
+
+    # reflatten
+    batch_size: int = len(cardinality)
+    w_u: np.ndarray
+    b_u: np.ndarray
+    box: np.ndarray
+    w_u, b_u, upper, box = get_features_batch(
+        model=model,
+        input_shape=input_shape,
+        gt_label=gt_label,
+        input_sample=input_, # (n_in_wo_channel, channel) or (channel, n_in_wo_channel)
+        lower_bound_input=lower_bound,
+        upper_bound_input=upper_bound,
+        free_indices=free_indices,
+        cardinality=cardinality,
+        data_format=data_format,
+        n_class=n_class,
+        method=lirpa_method,
+        batch_size=batch_size_free
+    )
+
+
+    # w_u (batch_size, n_in_with_channel, n_class-1) 
+    # b_u (batch_size, n_class-1)
+    # upper (batch_size, n_class-1)
+    # box (batch_size, 3, n_in_with_channel)
+
+    abstract_free_set = get_card_free_set(w_u, b_u, upper, box, n_in_wo_channel, xai_indices, free_indices, cardinality, channel, data_format, method=method)
 
     return abstract_free_set
 
@@ -485,6 +496,7 @@ def free_iteratively_k_features(
         verbose=verbose,
     )
 
+
     card = int(np.max(cardinality))  # we can only free up to the max of features we have successfully freed so far
     if refining_domain:
         while (
@@ -547,7 +559,6 @@ def free_iteratively_k_features(
     # while we find one singleton (we add the one with the least impact according to abstract bound)
     # finish with singleton search
     # warning check lower_bound_input, upper_bound_input
-
     singleton_free_index: list
     singleton_free_index = free_with_binary_search(
         model=model,
@@ -563,6 +574,7 @@ def free_iteratively_k_features(
         data_format=data_format,
         n_class=n_class,
         method=lirpa_method,
+        batch_size_free=batch_size_free,
         verbose=verbose
     )
 

@@ -32,7 +32,8 @@ def free_domain_with_abstract_interpretation_singleton(
     data_format: str = "channels_first",
     n_class: int = 10,
     lirpa_model:BoundedModule=None,
-    method="CROWN"
+    method="CROWN",
+    batch_size_free:int=-1,
 ) -> tuple[list[int], list[int]]:
     """Identifies individual features that can be proven robust using abstract interpretation.
 
@@ -96,7 +97,8 @@ def free_domain_with_abstract_interpretation_singleton(
         data_format=data_format,
         n_class=n_class,
         lirpa_model=lirpa_model,
-        method=method
+        method=method,
+        batch_size=batch_size_free
     )
 
     assert len(upper) == len(remaining_indices), "The length of the upper bounds should match the number of remaining indices"
@@ -137,6 +139,7 @@ def free_with_binary_search(
     n_class: int = 10,
     lirpa_model: BoundedModule = None,
     method:str= "CROWN",
+    batch_size_free:int = -1,
     verbose:int=0
 ) -> list[int]:
     """Finds a maximal robust subset of features using a recursive binary search.
@@ -210,13 +213,12 @@ def free_with_binary_search(
         data_format=data_format,
         n_class=n_class,
         lirpa_model=lirpa_model,
-        method=method
+        method=method,
+        batch_size_free=batch_size_free,
     )
 
     if len(best_singleton):
         assert best_singleton[0] in potential_candidates, "best_singleton should be in potential_candidates"
-
-
 
 
     if len(other_singleton):
@@ -262,7 +264,7 @@ def free_with_binary_search(
             C=C_gt,
             data_format=data_format,
             lirpa_model=lirpa_model,
-            method=method
+            method=method,
         )  # (1, n_out)
         is_safe: bool = np.max(upper) <= 0
 
@@ -292,7 +294,8 @@ def free_with_binary_search(
                 data_format=data_format,
                 n_class=n_class,
                 lirpa_model=lirpa_model,
-                method=method
+                method=method,
+                batch_size_free=batch_size_free
             )
 
             if len(singleton_indices_part_0):
@@ -315,7 +318,8 @@ def free_with_binary_search(
                 data_format=data_format,
                 n_class=n_class,
                 lirpa_model=lirpa_model,
-                method=method
+                method=method,
+                batch_size_free=batch_size_free
             )
 
             if len(singleton_indices_part_1):
