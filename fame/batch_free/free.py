@@ -233,7 +233,10 @@ def get_card_free_set(w_u, b_u, upper, box, n_in_wo_channel, xai_indices, free_i
         for j, k in enumerate(card_trivial):
             indices_k: np.ndarray = np.array([i for i in i_max_trivial[j] if i not in xai_indices and i not in free_indices][: cardinality[k]])
             # indices_k = np.array([i for i in range(n_in) if i not in xai_indices and i not in free_indices][:cardinality[k]])
-            abstract_free_set[k, indices_k] = 1
+            try:
+                abstract_free_set[int(k), indices_k] = 1
+            except:
+                import pdb; pdb.set_trace()
 
     if len(card_index) == 0:
         # only trivial solutions
@@ -398,7 +401,9 @@ def free_at_once_k_features(
     # upper (batch_size, n_class-1)
     # box (batch_size, 3, n_in_with_channel)
 
-    abstract_free_set = get_card_free_set(w_u, b_u, upper, box, n_in_wo_channel, xai_indices, free_indices, cardinality, channel, data_format, method=method)
+    abstract_free_set = get_card_free_set(w_u, b_u, upper, box, n_in_wo_channel, xai_indices, free_indices, cardinality, channel, data_format)
+    if np.max(abstract_free_set):
+        print('cardinality based abstract domain is active')
 
     return abstract_free_set
 

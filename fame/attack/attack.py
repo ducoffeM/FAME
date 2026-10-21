@@ -90,7 +90,8 @@ def attack(
     elif method=="apgd":
         nb_iter = 50  # Number of APGD iterations
         is_scalar_eps = isinstance(eps, (float, int))
-        eps = max(eps)
+        if not is_scalar_eps:
+            eps = max(eps)
 
         x_adv_class, _ = autopgd_attack(
             model_fn=model,
