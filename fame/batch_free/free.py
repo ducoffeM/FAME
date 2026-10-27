@@ -37,6 +37,7 @@ def get_features_batch(
     n_class: int = 10,
     batch_size: int = 1,
     method:str='CROWN',
+    lirpa_batch_size=5000
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Performs a batched abstract interpretation pass over a hybrid L-inf/L0 domain.
 
@@ -90,7 +91,7 @@ def get_features_batch(
 
     # modify the model to use asinput (batch, n_in_wo_channel, channel)
     device = next(model.parameters()).device
-    lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(device))
+    lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(device), lirpa_batch_size=lirpa_batch_size)
     
     xai_perturbation_domain: PerturbationDomain=None
     for k in range(0, len(cardinality), batch_size):
@@ -299,8 +300,8 @@ def free_at_once_k_features(
     input_sample: np.ndarray,
     lower_bound_input: np.ndarray,
     upper_bound_input: np.ndarray,
-    xai_indices: list[int] = [],
-    free_indices: list[int] = [],
+    xai_indices=None,
+    free_indices=None,
     cardinality: np.ndarray = None,
     data_format: str = "channels_first",
     n_class: int = 10,
@@ -308,6 +309,7 @@ def free_at_once_k_features(
     lirpa_method="CROWN",
     batch_size_free = 1,
     verbose: int = 0,
+    lirpa_batch_size=5000
 ) -> np.ndarray:
     """Finds the largest safe set of features, given cardinality constraints.
 
@@ -346,6 +348,11 @@ def free_at_once_k_features(
         binary mask indicating the set of features that can be safely made robust
         for the corresponding cardinality constraint.
     """
+    if xai_indices is None:
+        xai_indices = []
+    if free_indices is None:
+        free_indices = []
+
     lower_bound: np.ndarray = np.copy(lower_bound_input) + 0.0
     upper_bound: np.ndarray = np.copy(upper_bound_input) + 0.0
 
@@ -392,7 +399,8 @@ def free_at_once_k_features(
         data_format=data_format,
         n_class=n_class,
         method=lirpa_method,
-        batch_size=batch_size_free
+        batch_size=batch_size_free,
+        lirpa_batch_size=lirpa_batch_size
     )
 
 
@@ -418,8 +426,8 @@ def free_iteratively_k_features(
     lower_bound_input: np.array,
     upper_bound_input: np.array,
     eps: float = 0.0,
-    xai_indices: list[int] = [],
-    free_indices: list[int] = [],
+    xai_indices=None,
+    free_indices=None,
     data_format: str = "channels_first",
     n_class: int = 10,
     method: str = "greedy",
@@ -428,6 +436,7 @@ def free_iteratively_k_features(
     batch_size_free:int = 10,
     verbose: int = 0,
     step_cardinality = 1, # trying the free every range of features from 1 to n_in_wo_channel with step_cardinality
+    lirpa_batch_size=5000,
 ) -> tuple[list[int], list[int]]:
     """Iteratively finds the largest possible set of robust features for a given input.
 
@@ -468,6 +477,11 @@ def free_iteratively_k_features(
         - The second list contains the remaining features that could not be
           proven robust by this method.
     """
+    if xai_indices is None:
+        xai_indices = []
+    if free_indices is None:
+        free_indices = []
+
     if data_format == "channels_first":
         channel, H, W = input_shape
     else:
@@ -482,6 +496,8 @@ def free_iteratively_k_features(
 
     cardinality: np.ndarray = np.arange(1, n_in_wo_channel-len(free_indices)- len(xai_indices), step_cardinality)
 
+    if len(free_indices) + len(xai_indices) == input_shape[1] * input_shape[2]:
+        return free_indices, []
 
     abstract_set: np.ndarray = free_at_once_k_features(
         model=model,
@@ -499,8 +515,8 @@ def free_iteratively_k_features(
         lirpa_method=lirpa_method,
         batch_size_free = batch_size_free,
         verbose=verbose,
+        lirpa_batch_size=lirpa_batch_size
     )
-
 
     card = int(np.max(cardinality))  # we can only free up to the max of features we have successfully freed so far
     if refining_domain:
@@ -542,6 +558,9 @@ def free_iteratively_k_features(
                     "cardinality should not be empty as the local region is not robust unless the local region is robust"
                 )
 
+            if len(free_indices) + len(xai_indices) == input_shape[1] * input_shape[2]:
+                return free_indices, []
+
             abstract_set = free_at_once_k_features(
                 model=model,
                 input_shape=input_shape,
@@ -557,6 +576,7 @@ def free_iteratively_k_features(
                 method=method,
                 lirpa_method=lirpa_method,
                 verbose=0,
+                lirpa_batch_size=lirpa_batch_size
             )
 
 
@@ -580,7 +600,8 @@ def free_iteratively_k_features(
         n_class=n_class,
         method=lirpa_method,
         batch_size_free=batch_size_free,
-        verbose=verbose
+        verbose=verbose,
+        lirpa_batch_size=lirpa_batch_size
     )
 
     return free_indices, singleton_free_index

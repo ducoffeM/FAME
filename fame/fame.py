@@ -27,7 +27,8 @@ def get_eps_value(eps):
 
 def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: tuple, gt_label: int,n_class: int, \
                 eps: float, lower_bound_input: np.ndarray = None, upper_bound_input: np.ndarray = None, \
-                data_format: str = "channels_first", free_methods=["CROWN"], xai_methods=['pgd'], traversal_order="lirpa", batch_size_free=10, step_cardinality=1, batch_size_xai=-1, verbose:int=0):
+                data_format: str = "channels_first", free_methods=["CROWN"], xai_methods=['pgd'], traversal_order="lirpa", batch_size_free=10, step_cardinality=1, batch_size_xai=-1, verbose:int=0,
+                lirpa_batch_size=5000):
     """
     Get the FAME XAI indices for a given model and input sample.
 
@@ -91,7 +92,8 @@ def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: 
                 method=free_method,
                 verbose=verbose,
                 batch_size_free=batch_size_free,
-                step_cardinality=step_cardinality
+                step_cardinality=step_cardinality,
+                lirpa_batch_size=lirpa_batch_size
             )
 
         free_indices:list = free_indices_cardinality+free_indices_binary

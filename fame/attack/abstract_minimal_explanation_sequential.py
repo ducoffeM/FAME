@@ -15,8 +15,8 @@ def find_closest_xai(
     lower_bound: Tensor,
     upper_bound: Tensor,
     eps: float = 0.0,
-    xai_indices: list[int] = [],
-    free_indices: list[int] = [],
+    xai_indices=None,
+    free_indices=None,
     method: str = "fgsm",
     device: str = "mps",
     channel: int = 1,
@@ -24,7 +24,8 @@ def find_closest_xai(
     n_class: int = 10,
     traversal_order: str = "greedy",
     verbose:int=0,
-    singleton_only:bool=False, 
+    singleton_only:bool=False,
+    lirpa_batch_size=5000
 ) -> tuple[list[int], list[int]]:
     """Identifies a minimal set of robust features required to prevent adversarial attacks.
 
@@ -70,6 +71,10 @@ def find_closest_xai(
           are sufficient to guarantee the model's correctness against attacks on
           the `vulnerable_features`.
     """
+    if xai_indices is None:
+        xai_indices = []
+    if free_indices is None:
+        free_indices = []
 
     n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
 
@@ -102,6 +107,7 @@ def find_closest_xai(
             channel=channel,
             data_format=data_format,
             n_class=n_class,
+            lirpa_batch_size=lirpa_batch_size
         )
     elif traversal_order=="arrange":
         remaining_features_with_traversal = [i for i in range(n_in_wo_channel) if not i in xai_indices + free_indices]

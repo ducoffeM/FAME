@@ -16,8 +16,8 @@ def find_closest_xai_with_dichotomy(
     lower_bound: Tensor,
     upper_bound: Tensor,
     eps: float = 0.0,
-    xai_indices: list[int] = [],
-    free_indices: list[int] = [],
+    xai_indices=None,
+    free_indices=None,
     method: str = "fgsm",
     device: str = "mps",
     channel: int = 1,
@@ -69,6 +69,10 @@ def find_closest_xai_with_dichotomy(
         - **robust_subset**: An approximation of a minimal set of features
           that ensures robustness.
     """
+    if xai_indices is None:
+        xai_indices = []
+    if free_indices is None:
+        free_indices = []
 
     # compute attacks on every remaining feature
     n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
@@ -139,8 +143,8 @@ def find_closest_xai(
     lower_bound: Tensor,
     upper_bound: Tensor,
     eps: float = 0.0,
-    xai_indices: list[int] = [],
-    free_indices: list[int] = [],
+    xai_indices=None,
+    free_indices=None,
     method: str = "fgsm",
     device: str = "mps",
     channel: int = 1,
@@ -190,6 +194,10 @@ def find_closest_xai(
         - **robust_subset**: The final minimal set of features that ensures
           robustness.
     """
+    if xai_indices is None:
+        xai_indices = []
+    if free_indices is None:
+        free_indices = []
 
     n_in_wo_channel: int = int(input_sample.shape[-1] / channel)
 
