@@ -64,8 +64,6 @@ def get_abstract_model(
     lirpa_model.set_bound_opts({'optimize_bound_args': {'iteration': 20, 'lr_alpha': 0.1}, 'crown_batch_size': lirpa_batch_size,
                                 'batched_crown_max_vram_ratio': 0.5})
 
-    # TODO: should use the same batch size with my code for consistency?
-
     return lirpa_model
     
 
