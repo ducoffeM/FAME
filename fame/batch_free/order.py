@@ -81,6 +81,7 @@ def get_greedy_order(
     channel: int = 1,
     data_format: str = "channels_first",
     n_class: int = 10,
+    lirpa_batch_size=5000
 ):
     """Ranks input features by their impact on model robustness to get a greedy search order.
 
@@ -158,7 +159,7 @@ def get_greedy_order(
     # convert to torch tensor
     C_gt: Tensor = torch.tensor(C_gt, dtype=torch.float32).to(device)
 
-    lirpa_model = get_abstract_model(model=model,dummy_input=input_sample_tensor).to(device)
+    lirpa_model = get_abstract_model(model=model,dummy_input=input_sample_tensor, lirpa_batch_size=lirpa_batch_size).to(device)
     ptb:Perturbation = PerturbationLpNorm(norm=np.inf, eps=eps,
                                                 x_L = lower_bound_tensor, x_U = upper_bound_tensor)
     bounded_image = BoundedTensor(input_sample_tensor, ptb)
@@ -169,9 +170,10 @@ def get_greedy_order(
     # 2. Specify that we need the A matrices for output node with respect to input node
     needed_A_dict = {lirpa_model.output_name[0]: [input_node_name]}    
 
-    _, ub_output, A_dict = lirpa_model.compute_bounds(x=(bounded_image,),method="CROWN", \
-                                                        return_A=True, needed_A_dict=needed_A_dict, C=C_gt,\
-                                                        bound_lower=False, bound_upper=True)
+    with torch.no_grad():
+        _, ub_output, A_dict = lirpa_model.compute_bounds(x=(bounded_image,),method="CROWN", \
+                                                            return_A=True, needed_A_dict=needed_A_dict, C=C_gt,\
+                                                            bound_lower=False, bound_upper=True)
     A_info = A_dict[lirpa_model.output_name[0]][input_node_name]
 
     A_upper = A_info['uA']     # Upper affine slope matrix,

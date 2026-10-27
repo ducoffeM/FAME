@@ -34,6 +34,7 @@ def free_domain_with_abstract_interpretation_singleton(
     lirpa_model:BoundedModule=None,
     method="CROWN",
     batch_size_free:int=-1,
+    lirpa_batch_size=5000
 ) -> tuple[list[int], list[int]]:
     """Identifies individual features that can be proven robust using abstract interpretation.
 
@@ -98,7 +99,8 @@ def free_domain_with_abstract_interpretation_singleton(
         n_class=n_class,
         lirpa_model=lirpa_model,
         method=method,
-        batch_size=batch_size_free
+        batch_size=batch_size_free,
+        lirpa_batch_size=lirpa_batch_size
     )
 
     assert len(upper) == len(remaining_indices), "The length of the upper bounds should match the number of remaining indices"
@@ -140,7 +142,8 @@ def free_with_binary_search(
     lirpa_model: BoundedModule = None,
     method:str= "CROWN",
     batch_size_free:int = -1,
-    verbose:int=0
+    verbose:int=0,
+    lirpa_batch_size=5000
 ) -> list[int]:
     """Finds a maximal robust subset of features using a recursive binary search.
 
@@ -194,7 +197,7 @@ def free_with_binary_search(
 
     if lirpa_model is None:
         
-        lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(device))
+        lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(device), lirpa_batch_size=lirpa_batch_size)
 
     # step 1: identify singleton that could be free
     best_singleton: list[int]
@@ -215,6 +218,7 @@ def free_with_binary_search(
         lirpa_model=lirpa_model,
         method=method,
         batch_size_free=batch_size_free,
+        lirpa_batch_size=lirpa_batch_size
     )
 
     if len(best_singleton):

@@ -211,7 +211,8 @@ def get_lower_box_l0(
 
 
 def check_is_robust(
-    model, input_sample, eps, channel, data_format, n_class, lirpa_model=None, means=None, stddev=None
+    model, input_sample, eps, channel, data_format, n_class, lirpa_model=None, means=None, stddev=None,
+    lirpa_batch_size=5000
 ) -> bool:
     """Checks the L-infinity robustness of a model for a given input and epsilon.
 
@@ -263,6 +264,7 @@ def check_is_robust(
         channel=channel,
         data_format=data_format,
         n_class=n_class,
+        lirpa_batch_size = lirpa_batch_size
     )  # (1, n_out)
 
     return np.max(upper) <= 0

@@ -24,7 +24,8 @@ def get_abstract_model(
     model: nn.Module,
     dummy_input: torch.Tensor,
     conv_mode: str = "patches",
-    device: Optional[str] = None
+    device: Optional[str] = None,
+    lirpa_batch_size=5000
 ) -> BoundedModule:
     """Creates an auto_LiRPA BoundedModule model that computes abstract upper bounds for robustness verification.
 
@@ -60,7 +61,8 @@ def get_abstract_model(
         dummy_input = dummy_input.to(device)
     device = next(model.parameters()).device
     lirpa_model:BoundedModule = BoundedModule(model, torch.empty_like(dummy_input), device=device, bound_opts={'conv_mode': conv_mode, "sparse_intermediate_bounds": True})
-    lirpa_model.set_bound_opts({'optimize_bound_args': {'iteration': 20, 'lr_alpha': 0.1}})
+    lirpa_model.set_bound_opts({'optimize_bound_args': {'iteration': 20, 'lr_alpha': 0.1}, 'crown_batch_size': lirpa_batch_size,
+                                'batched_crown_max_vram_ratio': 0.5})
 
     return lirpa_model
     
@@ -81,6 +83,7 @@ def get_abstract_output_domain_singleton(
     lirpa_model: BoundedModule = None,
     batch_size: int =2,
     method="CROWN",
+    lirpa_batch_size=5000
 ) -> np.ndarray:
     """Computes the certified output bounds when perturbing single features one by one.
 
@@ -142,7 +145,7 @@ def get_abstract_output_domain_singleton(
 
     # check input sample has batch dimension
     if lirpa_model is None:
-        lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(model.device), device=model.device)
+        lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(model.device), device=model.device, lirpa_batch_size=lirpa_batch_size)
 
     
     if data_format == "channels_first":
@@ -253,7 +256,9 @@ def get_abstract_output_domain_singleton(
         bounded_image = BoundedTensor(input_batch, perturbation)
         perturbation.x_L = lower_bound_batch
         perturbation.x_U = upper_bound_batch
-        lb_output, ub_output = lirpa_model.compute_bounds(x=(bounded_image,), method=method, C=torch.from_numpy(C_gt).float().to(device), bound_lower=False, bound_upper=True)
+
+        with torch.no_grad():
+            lb_output, ub_output = lirpa_model.compute_bounds(x=(bounded_image,), method=method, C=torch.from_numpy(C_gt).float().to(device), bound_lower=False, bound_upper=True)
 
         all_upper.append(ub_output.detach().cpu().numpy())
 
@@ -273,6 +278,7 @@ def get_abstract_output_domain(
     lirpa_model: BoundedModule = None,
     bound_upper:bool=True,
     bound_lower:bool=False,
+    lirpa_batch_size=5000
 ) -> tuple[np.ndarray]:
     """Computes the certified output bounds for a single input domain.
 
@@ -317,7 +323,7 @@ def get_abstract_output_domain(
 
 
     if lirpa_model is None:
-        lirpa_model = get_abstract_model(model=model,dummy_input=input_sample[:1]).to(model.device)
+        lirpa_model = get_abstract_model(model=model,dummy_input=input_sample[:1], lirpa_batch_size=lirpa_batch_size).to(model.device)
 
     bounded_image = BoundedTensor(input_sample, perturbation)
 
@@ -327,9 +333,10 @@ def get_abstract_output_domain(
         # 2. Specify that we need the A matrices for output node with respect to input node
         needed_A_dict = {lirpa_model.output_name[0]: [input_node_name]}  
 
-        lower_output, upper_output, A_dict = lirpa_model.compute_bounds(x=(bounded_image,),method=method, \
-                                                        return_A=True, needed_A_dict=needed_A_dict, C=C,\
-                                                        bound_lower=bound_lower, bound_upper=bound_upper)
+        with torch.no_grad():
+            lower_output, upper_output, A_dict = lirpa_model.compute_bounds(x=(bounded_image,),method=method, \
+                                                            return_A=True, needed_A_dict=needed_A_dict, C=C,\
+                                                            bound_lower=bound_lower, bound_upper=bound_upper)
         
         A_info = A_dict[lirpa_model.output_name[0]][input_node_name]
 
@@ -354,10 +361,12 @@ def get_abstract_output_domain(
             return w, b, lower_output.detach().cpu().numpy()
     else:
         if bound_upper:
-            _, ub_output = lirpa_model.compute_bounds(x=(bounded_image,),method=method, C=C, bound_lower=False, bound_upper=True)
+            with torch.no_grad():
+                _, ub_output = lirpa_model.compute_bounds(x=(bounded_image,),method=method, C=C, bound_lower=False, bound_upper=True)
             return ub_output.detach().cpu().numpy()
         else:
-            lb_output, _ = lirpa_model.compute_bounds(x=(bounded_image,),method=method, C=C, bound_lower=True, bound_upper=False)
+            with torch.no_grad():
+                lb_output, _ = lirpa_model.compute_bounds(x=(bounded_image,),method=method, C=C, bound_lower=True, bound_upper=False)
             return lb_output.detach().cpu().numpy()
 
 
