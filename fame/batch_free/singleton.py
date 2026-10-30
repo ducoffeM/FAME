@@ -104,23 +104,23 @@ def free_domain_with_abstract_interpretation_singleton(
     )
 
     assert len(upper) == len(remaining_indices), "The length of the upper bounds should match the number of remaining indices"
+    max_upper = np.max(upper, axis=-1)
+    
+    if np.min(max_upper) <= 0:
+        # Get all indices where max_upper <= 0
+        valid_indices = np.where(max_upper <= 0)[0]
 
-    if np.min(np.max(upper, -1)) <= 0:
+        # Sort these indices based on their corresponding max_upper values
+        sorted_valid_indices = valid_indices[np.argsort(max_upper[valid_indices])]
 
-        # there is at least one singleton that is robust, return the best one and the rest
-        top_index = np.argmin(np.max(upper, -1))
-        # Get matching indices
-        indices = np.where(np.max(upper, axis=-1) <= 0)[0]
+        # The first element is the minimum (top_index), the rest follow in ascending order
+        top_index = sorted_valid_indices[0]
+        other_indices = sorted_valid_indices[1:]
 
-        # Exclude top_index 
-        other_indices = [i for i in indices if i != top_index]      
-        #other_indices = [i for i in np.where(np.max(upper, -1) <= 0)[0] and i != top_index]
-        #other_indices = [
-        #    i for i in range(len(upper)) if np.max(upper, -1)[i] <= 0 and i != top_index
-        #]
         return [remaining_indices[top_index]], [remaining_indices[j] for j in other_indices]
     else:
         return [], []
+    
 
 
 ##### binary search
@@ -228,25 +228,30 @@ def free_with_binary_search(
     if len(other_singleton):
         assert [i in potential_candidates for i in other_singleton], "other_singleton should be a subset of potential_candidates"
         # create an order
-        traversal_order_indices: list[int] = best_singleton + other_singleton
+        traversal_order_indices: list[int] = other_singleton
         # try to free everything at once
 
         input_sample_torch = torch.tensor(np.reshape(input_sample, input_shape)[None], dtype=torch.float32).to(device)
 
         if len(xai_indices):
-            input_sample_flat = np.reshape(input_shape, (channel, n_in_wo_channel))
-            lower_bound = np.reshape(lower_bound, (channel, n_in_wo_channel))
-            upper_bound = np.reshape(lower_bound, (channel, n_in_wo_channel))
-            lower_bound_flat[:, xai_indices] = input_sample_flat[xai_indices]
-            upper_bound_flat[:, xai_indices] = input_sample_flat[xai_indices]
+
+            
+            input_sample_flat = np.reshape(input_sample, (channel, n_in_wo_channel))
+            lower_bound_flat = np.reshape(lower_bound, (channel, n_in_wo_channel))
+            upper_bound_flat = np.reshape(lower_bound, (channel, n_in_wo_channel))
+            lower_bound_flat[:, xai_indices] = input_sample_flat[:,xai_indices]
+            upper_bound_flat[:, xai_indices] = input_sample_flat[:,xai_indices]
 
             lower_bound_torch = torch.tensor(np.reshape(lower_bound_flat, input_shape)[None], dtype=torch.float32).to(device)
             upper_bound_torch = torch.tensor(np.reshape(upper_bound_flat, input_shape)[None], dtype=torch.float32).to(device)
             eps = np.max(upper_bound_flat - lower_bound_flat)
+            
         else:
             eps=np.max(upper_bound - lower_bound)
             lower_bound_torch = torch.tensor(np.reshape(lower_bound, input_shape)[None], dtype=torch.float32).to(device)
             upper_bound_torch = torch.tensor(np.reshape(upper_bound, input_shape)[None], dtype=torch.float32).to(device)
+
+        
 
         ptb:Perturbation = PerturbationLpNorm(norm=np.inf, eps=eps,
                                                 x_L = lower_bound_torch, x_U = upper_bound_torch)
@@ -272,12 +277,15 @@ def free_with_binary_search(
         )  # (1, n_out)
         is_safe: bool = np.max(upper) <= 0
 
+
         if is_safe:
             assert [i in potential_candidates for i in traversal_order_indices], "traversal_order_indices should be a subset of potential_candidates"
-            return traversal_order_indices
+            return best_singleton+traversal_order_indices
         else:
             # split in half
             n_singleton: int = len(traversal_order_indices)
+            if n_singleton==1:
+                return best_singleton
             n_singleton_half: int = int(n_singleton / 2)
             traversal_order_indices_part_0: list[int] = traversal_order_indices[:n_singleton_half]
             traversal_order_indices_part_1: list[int] = traversal_order_indices[n_singleton_half:]
@@ -291,8 +299,8 @@ def free_with_binary_search(
                 input_sample=input_sample,
                 lower_bound=lower_bound,
                 upper_bound=upper_bound,
-                xai_indices=xai_indices,
-                free_indices=free_indices,
+                xai_indices=xai_indices+traversal_order_indices_part_1,
+                free_indices=free_indices+best_singleton,
                 potential_candidates=traversal_order_indices_part_0,
                 channel=channel,
                 data_format=data_format,
@@ -315,8 +323,8 @@ def free_with_binary_search(
                 input_sample=input_sample,
                 lower_bound=lower_bound,
                 upper_bound=upper_bound,
-                xai_indices=xai_indices,
-                free_indices=free_indices + singleton_indices_part_0,
+                xai_indices=xai_indices+ [i for i in traversal_order_indices_part_0 if not i in singleton_indices_part_0],
+                free_indices=free_indices + singleton_indices_part_0+best_singleton,
                 potential_candidates=traversal_order_indices_part_1,
                 channel=channel,
                 data_format=data_format,
@@ -332,7 +340,7 @@ def free_with_binary_search(
 
             free_indices_combined = singleton_indices_part_0 + singleton_indices_part_1
             assert len(np.unique(free_indices_combined)) == len(free_indices_combined), "The combined free indices should contain unique indices"
-            return singleton_indices_part_0 + singleton_indices_part_1
+            return best_singleton+singleton_indices_part_0 + singleton_indices_part_1
     else:
         return best_singleton
 
