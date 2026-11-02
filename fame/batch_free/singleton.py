@@ -238,7 +238,7 @@ def free_with_binary_search(
             
             input_sample_flat = np.reshape(input_sample, (channel, n_in_wo_channel))
             lower_bound_flat = np.reshape(lower_bound, (channel, n_in_wo_channel))
-            upper_bound_flat = np.reshape(lower_bound, (channel, n_in_wo_channel))
+            upper_bound_flat = np.reshape(upper_bound, (channel, n_in_wo_channel))
             lower_bound_flat[:, xai_indices] = input_sample_flat[:,xai_indices]
             upper_bound_flat[:, xai_indices] = input_sample_flat[:,xai_indices]
 
