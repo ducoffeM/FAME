@@ -365,12 +365,12 @@ def free_at_once_k_features(
 
     input_: np.ndarray
     if data_format == "channels_first":
-        lower_bound = np.reshape(lower_bound, (channel, n_in_wo_channel))  # (channel, n_in_wo_channel)
-        upper_bound = np.reshape(upper_bound, (channel, n_in_wo_channel))
+        lower_bound = np.reshape(lower_bound.copy(), (channel, n_in_wo_channel))  # (channel, n_in_wo_channel)
+        upper_bound = np.reshape(upper_bound.copy(), (channel, n_in_wo_channel))
         input_: np.ndarray = np.reshape(np.copy(input_sample) + 0.0, (channel, n_in_wo_channel))
     else:
-        lower_bound = np.reshape(lower_bound, (n_in_wo_channel, channel))  # (n_in_wo_channel, channel)
-        upper_bound = np.reshape(upper_bound, (n_in_wo_channel, channel))
+        lower_bound = np.reshape(lower_bound.copy(), (n_in_wo_channel, channel))  # (n_in_wo_channel, channel)
+        upper_bound = np.reshape(upper_bound.copy(), (n_in_wo_channel, channel))
         input_: np.ndarray = np.reshape(np.copy(input_sample) + 0.0, (n_in_wo_channel, channel))
 
     # freeze xai features to the nominal value
@@ -603,6 +603,5 @@ def free_iteratively_k_features(
         verbose=verbose,
         lirpa_batch_size=lirpa_batch_size
     )
-
     return free_indices, singleton_free_index
     

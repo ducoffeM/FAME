@@ -237,8 +237,8 @@ def free_with_binary_search(
 
             
             input_sample_flat = np.reshape(input_sample, (channel, n_in_wo_channel))
-            lower_bound_flat = np.reshape(lower_bound, (channel, n_in_wo_channel))
-            upper_bound_flat = np.reshape(upper_bound, (channel, n_in_wo_channel))
+            lower_bound_flat = np.reshape(lower_bound, (channel, n_in_wo_channel)).copy()
+            upper_bound_flat = np.reshape(upper_bound, (channel, n_in_wo_channel)).copy()
             lower_bound_flat[:, xai_indices] = input_sample_flat[:,xai_indices]
             upper_bound_flat[:, xai_indices] = input_sample_flat[:,xai_indices]
 
@@ -248,8 +248,8 @@ def free_with_binary_search(
             
         else:
             eps=np.max(upper_bound - lower_bound)
-            lower_bound_torch = torch.tensor(np.reshape(lower_bound, input_shape)[None], dtype=torch.float32).to(device)
-            upper_bound_torch = torch.tensor(np.reshape(upper_bound, input_shape)[None], dtype=torch.float32).to(device)
+            lower_bound_torch = torch.tensor(np.reshape(lower_bound.copy(), input_shape)[None], dtype=torch.float32).to(device)
+            upper_bound_torch = torch.tensor(np.reshape(upper_bound.copy(), input_shape)[None], dtype=torch.float32).to(device)
 
         
 

@@ -350,10 +350,11 @@ def get_abstract_output_domain(
         # detach and cast to numpy arrays
 
         w = A.detach().cpu().numpy()
-        b = b.detach().cpu().numpy()    
+        b = b.detach().cpu().numpy()  
 
-        # reshape w_u to (batch, n_in_with_channel, n_class-1)
-        w = np.reshape(w, (w.shape[0], -1, b.shape[1]))
+        # A has shape (batch, n_class-1, *input_shape): flatten the input dims then
+        # transpose to (batch, n_in_with_channel, n_class-1). A plain reshape would mix inputs and outputs
+        w = np.transpose(np.reshape(w, (w.shape[0], b.shape[1], -1)), (0, 2, 1))
 
         if bound_upper:
             return w, b, upper_output.detach().cpu().numpy()
