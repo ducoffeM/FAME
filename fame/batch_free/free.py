@@ -5,6 +5,7 @@ from auto_LiRPA.perturbations import Perturbation, PerturbationLpNorm
 import torch.nn as nn
 from typing import TypeVar
 
+
 # Type alias: 'Model' can now be used in any type hint
 Model = nn.Module
 Tensor = torch.Tensor
@@ -22,7 +23,8 @@ from fame.batch_free.utils import encode_matrix
 
 from .greedy import get_greedy
 from .singleton import free_with_binary_search
-from .utils import get_b, get_free_mask, get_W, get_xai_mask
+from .utils import get_b, get_free_mask, get_W, get_xai_mask, get_cardinality
+from .singleton import is_robust, free_with_binary_search, free_domain_with_abstract_interpretation_singleton
 
 def get_features_batch(
     model: Model,
@@ -382,6 +384,9 @@ def free_at_once_k_features(
             lower_bound[xai_indices, :] = input_[xai_indices, :]
             upper_bound[xai_indices, :] = input_[xai_indices, :]
 
+    if len(cardinality) == 0:
+        import pdb; pdb.set_trace()
+
     # reflatten
     batch_size: int = len(cardinality)
     w_u: np.ndarray
@@ -410,7 +415,7 @@ def free_at_once_k_features(
     # box (batch_size, 3, n_in_with_channel)
 
     abstract_free_set = get_card_free_set(w_u, b_u, upper, box, n_in_wo_channel, xai_indices, free_indices, cardinality, channel, data_format)
-    if np.max(abstract_free_set):
+    if np.max(abstract_free_set) and verbose:
         print('cardinality based abstract domain is active')
 
     return abstract_free_set
@@ -490,11 +495,22 @@ def free_iteratively_k_features(
     n_in_with_channel: int = np.prod(input_shape)
     n_in_wo_channel: int = int(n_in_with_channel / channel)
 
-
     lower_bound_input: np.ndarray = np.copy(lower_bound_input)
     upper_bound_input: np.ndarray = np.copy(upper_bound_input)
-
-    cardinality: np.ndarray = np.arange(1, n_in_wo_channel-len(free_indices)- len(xai_indices), step_cardinality)
+    if step_cardinality < batch_size_free:
+        step_cardinality = batch_size_free
+    """
+    cardinality: np.ndarray = np.arange(1, n_in_wo_channel - len(free_indices) - len(xai_indices))
+    max_features = max(n_in_wo_channel-len(free_indices)- len(xai_indices), 2)
+    if max_features <= batch_size_free:
+        cardinality: np.ndarray = np.arange(1, max_features)
+    else:
+        cardinality: np.ndarray = np.arange(1, max_features, step_cardinality)
+        # Force include the absolute max if the step size skipped over it
+        if cardinality[-1] != max_features-1:
+            cardinality = np.append(cardinality, max_features-1)
+    """
+    cardinality = get_cardinality(max_features=n_in_wo_channel-len(free_indices)- len(xai_indices)-1, batch_size=step_cardinality)
 
     if len(free_indices) + len(xai_indices) == input_shape[1] * input_shape[2]:
         return free_indices, []
@@ -540,18 +556,15 @@ def free_iteratively_k_features(
             # update cardinality: we can only free up to the max of features we have successfully freed so far
             # because recursively we keep expanding the initial abstract domain
             # at initialisation we are not doing np.arange with increment 1, take the consecutive highest value in cardinality
-            card = np.where(cardinality > nb_free+1)[0]
-            if len(card)==0:
-                card=nb_free+step_cardinality
+            card_index = abstract_set.sum(-1).argmax()
+            if card_index == len(abstract_set) - 1:
+                card = abstract_set.sum(-1)[card_index] 
             else:
-                card = int(card[0])
-
+                card = min(abstract_set.sum(-1)[card_index + 1], n_in_wo_channel - len(free_indices) - len(xai_indices))
             if verbose: 
                 print(len(free_indices), 'features freed so far', free_indices, "with cardinality", card)
 
-            if verbose:
-                print('next call of free features at once will try to free at most {} features'.format(card))
-            cardinality = np.array([i for i in range(1, card)])
+            cardinality = get_cardinality(max_features=int(card), batch_size=step_cardinality)
 
             if not len(cardinality):
                 raise ValueError(
@@ -576,32 +589,202 @@ def free_iteratively_k_features(
                 method=method,
                 lirpa_method=lirpa_method,
                 verbose=0,
-                lirpa_batch_size=lirpa_batch_size
+                lirpa_batch_size=lirpa_batch_size,
             )
 
+    return free_indices
 
-    # we consider the tightest abstract domain at our disposal: singleton + set of current free features
-    # while we find one singleton (we add the one with the least impact according to abstract bound)
-    # finish with singleton search
-    # warning check lower_bound_input, upper_bound_input
-    singleton_free_index: list
-    singleton_free_index = free_with_binary_search(
+
+def free_fame_dichotomic(
+    model: Model,
+    input_shape: Tuple[int],
+    gt_label: int,
+    input_sample: np.array,
+    lower_bound_input: np.array,
+    upper_bound_input: np.array,
+    xai_indices=[],
+    free_indices=[],
+    remaining_indices=[],
+    data_format: str = "channels_first",
+    n_class: int = 10,
+    method: str = "greedy",
+    lirpa_method:str="CROWN",
+    refining_domain: bool = True,
+    batch_size_free:int = 10,
+    verbose: int = 0,
+    lirpa_batch_size=5000,
+    step_cardinality = 10, # trying the free every range of features from 1 to n_in_wo_channel with step_cardinality
+    device: str = "cuda"
+) -> tuple[list[int], list[int]]:
+
+    # first check: if domain is already robust, we can return the current free_indices
+    if len(remaining_indices) == 0:
+        return free_indices, []
+
+    step_cardinality = max(step_cardinality, 3)
+    is_safe = is_robust(
         model=model,
-        input_shape = input_shape,
+        input_shape=input_shape,
         gt_label=gt_label,
-        input_sample=np.copy(input_sample) + 0.0,
-        lower_bound=lower_bound_input,
-        upper_bound=upper_bound_input,
-        free_indices=free_indices,
-        potential_candidates=None,  #
+        input_sample=input_sample,
+        lower_bound=lower_bound_input.copy(),
+        upper_bound=upper_bound_input.copy(),
         xai_indices=xai_indices,
-        channel=channel,
         data_format=data_format,
         n_class=n_class,
-        method=lirpa_method,
+        lirpa_method=lirpa_method,
+        device=device
+    )
+
+    if is_safe:
+        return free_indices+remaining_indices, [] # return the unsat indices from remaining_indices and the ones that are unknown
+    if len(remaining_indices) == 1:
+        return free_indices, remaining_indices
+
+    eps = (upper_bound_input - lower_bound_input).max() / 2.0
+    
+    free_indices_with_fame = free_iteratively_k_features(
+        model=model,
+        input_shape=input_shape,
+        gt_label=gt_label,
+        input_sample=input_sample,
+        lower_bound_input=lower_bound_input,
+        upper_bound_input=upper_bound_input,
+        eps=eps,
+        xai_indices=xai_indices,
+        free_indices=free_indices,
+        data_format=data_format,
+        n_class=n_class,
+        method=method,
+        lirpa_method=lirpa_method,
+        refining_domain=refining_domain,
         batch_size_free=batch_size_free,
         verbose=verbose,
+        step_cardinality=step_cardinality,
         lirpa_batch_size=lirpa_batch_size
     )
-    return free_indices, singleton_free_index
-    
+
+
+
+    if len(free_indices_with_fame) == len(remaining_indices):
+        return free_indices_with_fame, []
+
+    # split into two sets for binary search
+    # compute traversal order based on the abstract domain (least impact first)
+    # step 1: identify singleton that could be free
+    potential_candidates = [i for i in remaining_indices if i not in free_indices_with_fame]
+    best_singleton: list[int]
+    other_singleton: list[int]
+    best_singleton, other_singleton = free_domain_with_abstract_interpretation_singleton(
+        model=model,
+        input_shape=input_shape,
+        gt_label=gt_label,
+        input_sample=input_sample.copy(),
+        lower_bound=lower_bound_input.copy(),
+        upper_bound=upper_bound_input.copy(),
+        xai_indices=xai_indices,
+        free_indices=free_indices_with_fame,
+        potential_candidates=potential_candidates,
+        channel=input_shape[0] if data_format == "channels_first" else input_shape[-1],
+        data_format=data_format,
+        n_class=n_class,
+        method=method,
+        batch_size_free=batch_size_free,
+        lirpa_batch_size=lirpa_batch_size,
+    )
+
+
+
+    if len(best_singleton) == 0:
+        # fame abstract domain is looser than singleton, so we cannot find any more free features
+        if verbose:
+            print('no more free features found with FAME')
+        return free_indices_with_fame, []
+    if len(best_singleton) and len(free_indices_with_fame) == 0:
+        # fame is looser than singleton so we skip to a binary search on singleton
+        # we consider the tightest abstract domain at our disposal: singleton + set of current free features
+        # while we find one singleton (we add the one with the least impact according to abstract bound)
+        # finish with singleton search
+        # warning check lower_bound_input, upper_bound_input
+        singleton_free_index: list
+        singleton_free_index = free_with_binary_search(
+            model=model,
+            input_shape = input_shape,
+            gt_label=gt_label,
+            input_sample=np.copy(input_sample) + 0.0,
+            lower_bound=lower_bound_input.copy(),
+            upper_bound=upper_bound_input.copy(),
+            free_indices=free_indices,
+            potential_candidates=other_singleton,  #
+            xai_indices=xai_indices,
+            channel=input_shape[0] if data_format == "channels_first" else input_shape[-1],
+            data_format=data_format,
+            n_class=n_class,
+            method=lirpa_method,
+            batch_size_free=batch_size_free,
+            verbose=verbose,
+            lirpa_batch_size=lirpa_batch_size
+        )
+        return free_indices + singleton_free_index, [i for i in remaining_indices if i not in free_indices + singleton_free_index]
+
+    # step 2: split the remaining features into two sets based on the best singleton
+    traversal_order_indices = other_singleton
+
+    # step 3: perform binary search on the remaining features
+    # to find the largest set of features that can be freed without violating robustness
+    # split in half
+    n_singleton: int = len(traversal_order_indices)
+    n_singleton_half: int = int(n_singleton / 2)
+    traversal_order_indices_part_0: list[int] = traversal_order_indices[:n_singleton_half]
+    traversal_order_indices_part_1: list[int] = traversal_order_indices[n_singleton_half:]
+
+    # step 4: check if the first half can be freed
+    free_indices_part_0: list[int]
+    free_indices_part_0, remaining_indices_part_0 = free_fame_dichotomic(
+        model=model,
+        input_shape=input_shape,
+        gt_label=gt_label,
+        input_sample=input_sample.copy(),
+        lower_bound_input=lower_bound_input.copy(),
+        upper_bound_input=upper_bound_input.copy(),
+        xai_indices=xai_indices+traversal_order_indices_part_1,
+        free_indices=free_indices_with_fame + best_singleton,
+        remaining_indices=traversal_order_indices_part_0,
+        data_format=data_format,
+        n_class=n_class,
+        method=method,
+        lirpa_method=lirpa_method,
+        refining_domain=refining_domain,
+        batch_size_free=batch_size_free,
+        verbose=verbose,
+        step_cardinality=step_cardinality,
+        lirpa_batch_size=lirpa_batch_size
+    )
+    free_indices_with_fame = free_indices_part_0
+
+    # step 5: check if the second half can be freed
+    free_indices_part_1: list[int]
+    free_indices_part_1, remaining_indices_part_1 = free_fame_dichotomic(
+        model=model,
+        input_shape=input_shape,
+        gt_label=gt_label,
+        input_sample=input_sample.copy(),
+        lower_bound_input=lower_bound_input.copy(),
+        upper_bound_input=upper_bound_input.copy(),
+        xai_indices=xai_indices+[i for i in traversal_order_indices_part_0 if i not in free_indices_with_fame],
+        free_indices=free_indices_with_fame,
+        remaining_indices=traversal_order_indices_part_1,
+        data_format=data_format,
+        n_class=n_class,
+        method=method,
+        lirpa_method=lirpa_method,
+        refining_domain=refining_domain,
+        batch_size_free=batch_size_free,
+        verbose=verbose,
+        step_cardinality=step_cardinality,
+        lirpa_batch_size=lirpa_batch_size
+    )
+    free_indices_with_fame = free_indices_part_1
+
+
+    return free_indices_with_fame, [i for i in remaining_indices if i not in free_indices_with_fame]

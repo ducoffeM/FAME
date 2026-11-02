@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from fame.attack import find_closest_xai
-from fame.batch_free.free import free_at_once_k_features, free_iteratively_k_features
+from fame.batch_free.free import free_at_once_k_features, free_iteratively_k_features, free_fame_dichotomic
 
 
 
@@ -27,7 +27,7 @@ def get_eps_value(eps):
 
 def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: tuple, gt_label: int,n_class: int, \
                 eps: float, lower_bound_input: np.ndarray = None, upper_bound_input: np.ndarray = None, \
-                data_format: str = "channels_first", free_methods=["CROWN"], xai_methods=['pgd'], traversal_order="lirpa", batch_size_free=10, step_cardinality=1, batch_size_xai=-1, verbose:int=0,
+                data_format: str = "channels_first", free_methods=["CROWN"], xai_methods=['pgd'], traversal_order="lirpa", batch_size_free=10, step_cardinality=10, batch_size_xai=-1, verbose:int=0,
                 lirpa_batch_size=5000):
     """
     Get the FAME XAI indices for a given model and input sample.
@@ -61,11 +61,11 @@ def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: 
 
     device = next(model.parameters()).device
 
-    flatten_image = np.reshape(input_sample, (channel,H*W))
+    flatten_image = np.reshape(input_sample.copy(), (channel,H*W))
     
 
-    flatten_lower_bound = np.reshape(lower_bound_input, (channel,H*W)) if lower_bound_input is not None else flatten_image - eps
-    flatten_upper_bound = np.reshape(upper_bound_input, (channel,H*W)) if upper_bound_input is not None else flatten_image + eps
+    flatten_lower_bound = np.reshape(lower_bound_input.copy(), (channel,H*W)) if lower_bound_input is not None else flatten_image - eps
+    flatten_upper_bound = np.reshape(upper_bound_input.copy(), (channel,H*W)) if upper_bound_input is not None else flatten_image + eps
 
     free_indices:list = []
     xai_indices:list = []
@@ -79,25 +79,26 @@ def get_xai_fame(model: torch.nn.Module, input_sample: np.ndarray, input_shape: 
 
         if verbose:
             print("free method:", free_method)
-        free_indices_cardinality, free_indices_binary = free_iteratively_k_features(
+       
+        remaining_indices=[i for i in range(H*W) if i not in xai_indices and i not in free_indices]
+        free_indices, _ = free_fame_dichotomic(
                 model=model,
                 input_shape=input_shape,
                 gt_label=gt_label,
                 input_sample=np.copy(flatten_image),
                 lower_bound_input=np.copy(flatten_lower_bound),
                 upper_bound_input=np.copy(flatten_upper_bound),
+                xai_indices=xai_indices,
+                free_indices=free_indices,
                 data_format= data_format,
-                eps=eps,
+                remaining_indices=remaining_indices,
                 n_class = n_class,
                 method=free_method,
                 verbose=verbose,
                 batch_size_free=batch_size_free,
+                lirpa_batch_size=lirpa_batch_size,
                 step_cardinality=step_cardinality,
-                lirpa_batch_size=lirpa_batch_size
             )
-
-        free_indices:list = free_indices_cardinality+free_indices_binary
-
 
     extra_free=[] # samples that are used to create attacks, thus we cannot put them in xai
     if len(xai_methods):

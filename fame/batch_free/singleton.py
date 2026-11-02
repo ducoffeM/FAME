@@ -1,5 +1,8 @@
 from typing import Union, Tuple
 import torch
+import torch.nn as nn
+from typing import TypeVar
+
 import numpy as np
 from fame.abstract_domain.abstract import (
     get_abstract_model,
@@ -7,13 +10,17 @@ from fame.abstract_domain.abstract import (
     get_abstract_output_domain_singleton,
 )
 
+# Type alias: 'Model' can now be used in any type hint
+Model = nn.Module
 Tensor = torch.Tensor
+
+# Generic TypeVar constrained to nn.Module (useful for generic functions)
+ModelType = TypeVar("ModelType", bound=nn.Module)
 
 from fame.batch_free.utils import encode_matrix
 
 from auto_LiRPA.perturbations import Perturbation, PerturbationLpNorm
 from auto_LiRPA import BoundedModule, BoundedTensor
-
 
 
 def free_domain_with_abstract_interpretation_singleton(
@@ -426,3 +433,71 @@ def free_with_singleton_search(
         singleton_solutions += best_singleton
 
     return singleton_solutions
+
+def is_robust(
+    model: Model,
+    input_shape: Tuple[int],
+    gt_label: int,
+    input_sample: np.array,
+    lower_bound: np.array,
+    upper_bound: np.array,
+    xai_indices: list[int] = [],
+    data_format: str = "channels_first",
+    n_class: int = 10,
+    lirpa_method: str = "CROWN",
+    lirpa_model=None,
+    device="cuda"
+) -> bool:
+
+    input_sample_torch = torch.tensor(np.reshape(input_sample, input_shape)[None], dtype=torch.float32).to(device)
+    if data_format == "channels_first":
+        channel, H, W = input_shape
+    else:
+        H, W, channel = input_shape
+
+    n_in_with_channel: int = channel * H * W
+    n_in_wo_channel: int = H*W
+
+
+    if len(xai_indices):
+
+        input_sample_flat = np.reshape(input_sample, (channel, n_in_wo_channel))
+        lower_bound_flat = np.reshape(lower_bound, (channel, n_in_wo_channel)).copy()
+        upper_bound_flat = np.reshape(upper_bound, (channel, n_in_wo_channel)).copy()
+        lower_bound_flat[:, xai_indices] = input_sample_flat[:,xai_indices]
+        upper_bound_flat[:, xai_indices] = input_sample_flat[:,xai_indices]
+
+        lower_bound_torch = torch.tensor(np.reshape(lower_bound_flat, input_shape)[None], dtype=torch.float32).to(device)
+        upper_bound_torch = torch.tensor(np.reshape(upper_bound_flat, input_shape)[None], dtype=torch.float32).to(device)
+        eps = np.max(upper_bound_flat - lower_bound_flat)
+            
+    else:
+        eps=np.max(upper_bound - lower_bound)
+        lower_bound_torch = torch.tensor(np.reshape(lower_bound.copy(), input_shape)[None], dtype=torch.float32).to(device)
+        upper_bound_torch = torch.tensor(np.reshape(upper_bound.copy(), input_shape)[None], dtype=torch.float32).to(device)
+
+    ptb:Perturbation = PerturbationLpNorm(norm=np.inf, eps=eps,
+                                                x_L = lower_bound_torch, x_U = upper_bound_torch)
+    # build your input domain
+    # encode matrix C
+    C_gt: np.ndarray = np.repeat(
+            encode_matrix(n_class=n_class, groundtruth=gt_label)[None], repeats=1, axis=0
+    )  # (current_batch_size, n_class, n_class-1)
+    C_gt = np.transpose(C_gt, (0, 2, 1))  # (current_batch_size, n_class-1, n_class)
+    # convert to torch tensor
+    
+    C_gt: Tensor = torch.tensor(C_gt, dtype=torch.float32).to(device)
+
+    upper: np.array = get_abstract_output_domain(
+        model=model,
+        input_sample=input_sample_torch,
+        affine_bounds=False,
+        perturbation=ptb,
+        C=C_gt,
+        data_format=data_format,
+        lirpa_model=lirpa_model,
+        method=lirpa_method,
+    )  # (1, n_out)
+    is_safe: bool = np.max(upper) <= 0
+
+    return is_safe

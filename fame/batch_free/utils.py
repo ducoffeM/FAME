@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 
 
@@ -157,3 +158,30 @@ def get_mask(n_in: int, indices: list[int]) -> np.ndarray:
     mask = mask[None, :, None]  # (1, n_in, 1)
     return mask
 
+
+
+def get_cardinality(max_features, batch_size):
+    """Generates a list of cardinalities for feature selection.
+
+    This function creates a list of integers representing the number of features
+    to consider in each step of a feature selection or robustness verification
+    process. The cardinalities are evenly spaced between 1 and `max_features`,
+    with a total of `batch_size` steps.
+
+    Args:
+        max_features: The maximum number of features to consider.
+        batch_size: The number of steps or batches to generate.
+
+    Returns:
+        A numpy array containing the cardinalities for each step.
+    """
+    
+
+    if max_features >= 1:
+        # min(max_features, batch_size) ensures we don't request more steps than available integers
+        # dtype=int forces whole numbers, and np.unique removes any accidental duplicates
+        num_steps = min(max_features, batch_size)
+        cardinality = np.unique(np.linspace(1, max_features, num_steps, dtype=int))
+    else:
+        cardinality = np.array([1], dtype=int)
+    return cardinality

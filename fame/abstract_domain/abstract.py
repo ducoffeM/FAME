@@ -140,12 +140,13 @@ def get_abstract_output_domain_singleton(
 
     n_in_wo_channel = H * W
     n_in_with_channel = channel * n_in_wo_channel
+    device = next(model.parameters()).device
 
 
 
     # check input sample has batch dimension
     if lirpa_model is None:
-        lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(model.device), device=model.device, lirpa_batch_size=lirpa_batch_size)
+        lirpa_model = get_abstract_model(model=model,dummy_input=torch.zeros((1, *input_shape)).to(device), device=device, lirpa_batch_size=lirpa_batch_size)
 
     
     if data_format == "channels_first":
@@ -321,9 +322,9 @@ def get_abstract_output_domain(
         defined domain.
     """
 
-
+    device = next(model.parameters()).device
     if lirpa_model is None:
-        lirpa_model = get_abstract_model(model=model,dummy_input=input_sample[:1], lirpa_batch_size=lirpa_batch_size).to(model.device)
+        lirpa_model = get_abstract_model(model=model,dummy_input=input_sample[:1], lirpa_batch_size=lirpa_batch_size).to(device)
 
     bounded_image = BoundedTensor(input_sample, perturbation)
 
